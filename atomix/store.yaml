@@ -1,0 +1,16 @@
+apiVersion: consensus.atomix.io/v1beta1
+kind: ConsensusStore
+metadata:
+  name: consensus-store
+spec:
+  replicas: 3
+  groups: 3
+  volumeClaimTemplate:
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      volumeMode: Filesystem
+      resources:
+        requests:
+          storage: 8Gi
+      storageClassName: standard

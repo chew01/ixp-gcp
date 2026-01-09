@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dummy-producer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dummy-producer
+  template:
+    metadata:
+      labels:
+        app: dummy-producer
+    spec:
+      containers:
+      - name: dummy-producer
+        image: dummy-producer:local
+        env:
+        - name: KAFKA_BOOTSTRAP
+          value: "ixp-kafka-kafka-bootstrap:9092"
