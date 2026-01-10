@@ -1,5 +1,0 @@
-aiohttp
-aiokafka
-grpcio
-grpcio-tools
-protobuf

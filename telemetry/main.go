@@ -15,7 +15,6 @@ import (
 type FlowStat struct {
 	IngressPort int   `json:"ingress_port"`
 	EgressPort  int   `json:"egress_port"`
-	VLANID      int   `json:"vlan_id"`
 	Bytes       int64 `json:"bytes"`
 }
 
@@ -74,22 +73,20 @@ func main() {
 			throughputBps := float64(flow.Bytes*8) / durationSec
 
 			flowKey := fmt.Sprintf(
-				"%s|%d|%d|%d",
+				"%s|%d|%d",
 				digest.SwitchID,
 				flow.IngressPort,
 				flow.EgressPort,
-				flow.VLANID,
 			)
 
 			throughputMap.Put(ctx, flowKey, fmt.Sprintf("%.f", throughputBps))
 
 			log.Printf(
-				"[switch=%s window=%d] flow %d→%d vlan=%d : %.2f Mbps",
+				"[switch=%s window=%d] flow %d→%d: %.2f Mbps",
 				digest.SwitchID,
 				digest.WindowStartNS,
 				flow.IngressPort,
 				flow.EgressPort,
-				flow.VLANID,
 				throughputBps/1e6,
 			)
 		}
