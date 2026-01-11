@@ -1,10 +1,7 @@
 package main
 
-type FlowRecord struct {
-	FlowID        string `json:"flow_id"`
-	SwitchID      string `json:"switch_id"`
-	IngressPort   int    `json:"ingress_port"`
-	EgressPort    int    `json:"egress_port"`
-	ThroughputBps string `json:"throughput_bps"`
-	WindowEndNS   int64  `json:"window_end_ns"`
+type Bid struct {
+	UserID    string  `json:"user_id"`
+	Units     int64   `json:"units"`      // bandwidth units (e.g. Mbps)
+	UnitPrice float64 `json:"unit_price"` // price per unit, stored to 4 decimal points
 }

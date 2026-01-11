@@ -10,7 +10,8 @@ import (
 )
 
 type Server struct {
-	store TelemetryStore
+	fs FlowStore
+	bs BidStore
 }
 
 func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +46,7 @@ func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
 
 	// Retrieve from Atomix
 	ctx := context.Background()
-	value, err := s.store.GetFlow(ctx, flowKey) // returns string throughput
+	value, err := s.fs.Get(ctx, flowKey) // returns string throughput
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error fetching flow: %v", err), http.StatusInternalServerError)
 		return
@@ -66,4 +67,43 @@ func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var bid Bid
+	if err := json.NewDecoder(r.Body).Decode(&bid); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Validation
+	if bid.UserID == "" {
+		http.Error(w, "user_id is required", http.StatusBadRequest)
+		return
+	}
+	if bid.Units <= 0 {
+		http.Error(w, "units must be > 0", http.StatusBadRequest)
+		return
+	}
+	if bid.UnitPrice <= 0 {
+		http.Error(w, "unit_price must be > 0", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+
+	err := s.bs.Put(ctx, bid.UserID, bid.Units, bid.UnitPrice)
+	if err != nil {
+		log.Printf("failed to store bid: %v", err)
+		http.Error(w, "failed to store bid", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("bid accepted"))
 }

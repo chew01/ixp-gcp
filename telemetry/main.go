@@ -51,6 +51,8 @@ func main() {
 		log.Printf("Error getting throughput map: %v", err)
 	}
 
+	// TODO: dump into TSDB
+
 	for {
 		msg, err := reader.ReadMessage(ctx)
 		if err != nil {

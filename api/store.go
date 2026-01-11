@@ -2,7 +2,11 @@ package main
 
 import "context"
 
-type TelemetryStore interface {
+type FlowStore interface {
 	// Key: sw-1|1|5
-	GetFlow(ctx context.Context, flowKey string) (string, error)
+	Get(ctx context.Context, flowKey string) (string, error)
+}
+
+type BidStore interface {
+	Put(ctx context.Context, userID string, units int64, unitPrice float64) error
 }

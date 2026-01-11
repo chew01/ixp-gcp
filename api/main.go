@@ -6,14 +6,14 @@ import (
 )
 
 func main() {
-	store := &AtomixStore{}
-
 	server := &Server{
-		store: store,
+		fs: &AtomixFlowStore{},
+		bs: &AtomixBidStore{},
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/flows", server.getFlows)
+	mux.HandleFunc("/bids", server.postBid)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
