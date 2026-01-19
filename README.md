@@ -20,3 +20,7 @@ Schema v1:
   ]
 }
 ```
+
+### Requirements
+- Install Helm
+- Install Helm charts for Atomix, Prometheus, Grafana

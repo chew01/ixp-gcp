@@ -14,6 +14,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/flows", server.getFlows)
 	mux.HandleFunc("/bids", server.postBid)
+	mux.HandleFunc("/metrics", server.getMetrics)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))

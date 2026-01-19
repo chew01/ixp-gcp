@@ -1,11 +1,42 @@
-# Dockerfile
-FROM python:3.13-slim
+# ===== STAGE 1: Build =====
+FROM golang:1.25-alpine AS builder
+
+# Install git and bash for go modules
+RUN apk add --no-cache git bash
+
+# Set working directory
+WORKDIR /app
+
+# Copy go.mod and go.sum first for caching
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy the source code
+COPY . .
+
+# Build the Go binary (static)
+RUN CGO_ENABLED=0 GOOS=linux go build -o dummy-producer main.go
+
+# ===== STAGE 2: Minimal runtime =====
+FROM alpine:3.22
+
+# Create a non-root user
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy binary from builder
+COPY --from=builder /app/dummy-producer .
 
-COPY dummy-producer.py .
+# Set permissions
+RUN chown appuser:appgroup dummy-producer
 
-CMD ["python", "dummy-producer.py"]
+USER appuser
+
+# Expose port (if needed for metrics, optional)
+EXPOSE 8080
+
+# Run the binary
+ENTRYPOINT ["./dummy-producer"]

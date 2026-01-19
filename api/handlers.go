@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 type Server struct {
@@ -67,6 +68,24 @@ func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) getMetrics(w http.ResponseWriter, r *http.Request) {
+	var metrics strings.Builder
+	for i := 1; i <= 4; i++ {
+		for j := 5; j <= 8; j++ {
+			flowKey := fmt.Sprintf("sw-1|%d|%d", i, j)
+			ctx := context.Background()
+			value, err := s.fs.Get(ctx, flowKey)
+			if err != nil {
+				value = "0"
+			}
+			metricLine := fmt.Sprintf("ixp_flow_throughput_bps{switch=\"sw-1\",ingress_port=\"%d\",egress_port=\"%d\"} %s\n", i, j, value)
+			metrics.WriteString(metricLine)
+		}
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(metrics.String()))
 }
 
 func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
