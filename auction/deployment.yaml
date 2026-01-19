@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auction-runner
+  labels:
+    app: auction-runner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auction-runner
+  template:
+    metadata:
+      labels:
+        app: auction-runner
+        proxy.atomix.io/inject: "true"
+        proxy.atomix.io/profile: "ixp-storage-profile"
+    spec:
+      containers:
+      - name: auction-runner
+        image: auction-runner:local

@@ -1,0 +1,1 @@
+helm upgrade grafana grafana/grafana -f values.yaml -n monitoring
