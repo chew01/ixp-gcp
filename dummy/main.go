@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"log"
 	"math/rand/v2"
+	"net"
 	"os"
 	"time"
 
+	pb "github.com/chew01/ixp-gcp/proto"
 	"github.com/segmentio/kafka-go"
+	"google.golang.org/grpc"
 )
 
 type DummyProducer struct {
@@ -19,6 +22,7 @@ type DummyProducer struct {
 }
 
 type DummySwitch struct {
+	pb.UnimplementedVirtualCircuitServer
 }
 
 type Flow struct {
@@ -55,9 +59,20 @@ func main() {
 	defer writer.Close()
 
 	producer := DummyProducer{switchID: SwitchId, kafka: &writer}
+	s := grpc.NewServer()
+	pb.RegisterVirtualCircuitServer(s, &DummySwitch{})
+
+	lis, err := net.Listen("tcp", ":50051")
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
 
 	ctx := context.Background()
-	producer.Run(ctx)
+	go producer.Run(ctx)
+
+	if err := s.Serve(lis); err != nil {
+		log.Fatalf("failed to serve: %v", err)
+	}
 }
 
 func (p *DummyProducer) Run(ctx context.Context) {
@@ -102,8 +117,14 @@ func (p *DummyProducer) Run(ctx context.Context) {
 	}
 }
 
-func (s *DummySwitch) Run(ctx context.Context) {
+func (s *DummySwitch) SetUp(ctx context.Context, req *pb.SetUpRequest) (*pb.SetUpResponse, error) {
+	log.Printf("SetUp called with request: %+v", req)
+	return &pb.SetUpResponse{}, nil
+}
 
+func (s *DummySwitch) TearDown(ctx context.Context, req *pb.TearDownRequest) (*pb.TearDownResponse, error) {
+	log.Printf("TearDown called with request: %+v", req)
+	return &pb.TearDownResponse{}, nil
 }
 
 // randRange returns random number in range min to max inclusive

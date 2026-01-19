@@ -4,8 +4,8 @@ go 1.25.4
 
 require (
 	github.com/atomix/go-sdk v0.10.0
+	github.com/chew01/ixp-gcp/proto v0.0.0-20260119172851-9849c54bc75b
 	google.golang.org/grpc v1.76.0
-	google.golang.org/protobuf v1.36.11
 )
 
 require (
@@ -22,5 +22,6 @@ require (
 	golang.org/x/sys v0.37.0 // indirect
 	golang.org/x/text v0.30.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251222181119-0a764e51fe1b // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b // indirect
 )

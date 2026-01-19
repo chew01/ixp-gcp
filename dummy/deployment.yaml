@@ -18,3 +18,15 @@ spec:
         env:
         - name: KAFKA_BOOTSTRAP
           value: "ixp-kafka-kafka-bootstrap:9092"
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: dummy-producer
+spec:
+  selector:
+    app: dummy-producer
+  ports:
+    - port: 50051
+      targetPort: 50051

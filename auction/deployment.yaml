@@ -19,3 +19,6 @@ spec:
       containers:
       - name: auction-runner
         image: auction-runner:local
+        env:
+          - name: GRPC_SERVER_ADDR
+            value: "dummy-producer:50051"

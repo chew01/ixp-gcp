@@ -10,6 +10,7 @@ import (
 	"time"
 
 	pb "github.com/chew01/ixp-gcp/proto"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/atomix/go-sdk/pkg/atomix"
 	"github.com/atomix/go-sdk/pkg/generic"
@@ -52,7 +53,13 @@ func main() {
 			intervalSeconds = int(parsed.Seconds())
 		}
 	}
-	conn, err := grpc.NewClient("localhost:50051")
+
+	grpcServerAddr := os.Getenv("GRPC_SERVER_ADDR")
+	if grpcServerAddr == "" {
+		log.Fatal("GRPC_SERVER_ADDR env var not set")
+	}
+
+	conn, err := grpc.NewClient(grpcServerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to create gRPC connection: %v", err)
 	}
