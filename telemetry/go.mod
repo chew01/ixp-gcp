@@ -1,4 +1,4 @@
-module telemetry
+module github.com/chew01/ixp-gcp/telemetry
 
 go 1.25.4
 

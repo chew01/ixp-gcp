@@ -1,4 +1,4 @@
-module auction
+module github.com/chew01/ixp-gcp/auction
 
 go 1.25.4
 

@@ -1,4 +1,4 @@
-module dummy
+module github.com/chew01/ixp-gcp/dummy
 
 go 1.25.4
 
