@@ -117,8 +117,8 @@ func (r *AuctionRunner) runOnce(ctx context.Context) {
 			break
 		}
 
-		key := entry.Key
-		value := entry.Value
+		key := entry.Key()
+		value := entry.Value()
 		parts := strings.Split(value, "|")
 
 		units, err := strconv.ParseInt(parts[0], 10, 64)
@@ -148,7 +148,6 @@ func (r *AuctionRunner) runOnce(ctx context.Context) {
 
 	allocations, clearingPrice := runUniformPriceAuction(capacityUnits, bids)
 
-	// TODO: Set allocations
 	for _, alloc := range allocations {
 		r.client.SetUp(ctx, &pb.SetUpRequest{
 			ASideId:       1, // TODO: map user to Side ID

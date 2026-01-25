@@ -24,3 +24,7 @@ Schema v1:
 ### Requirements
 - Install Helm
 - Install Helm charts for Atomix, Prometheus, Grafana
+
+### Design
+- Throughput for bids is in kbps
+- Throughput for telemetry entries is coerced to nearest kbps

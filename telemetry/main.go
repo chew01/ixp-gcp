@@ -72,7 +72,7 @@ func main() {
 		}
 
 		for _, flow := range digest.Flows {
-			throughputBps := float64(flow.Bytes*8) / durationSec
+			throughputKbps := (float64(flow.Bytes*8) / 1e3) / durationSec
 
 			flowKey := fmt.Sprintf(
 				"%s|%d|%d",
@@ -81,15 +81,15 @@ func main() {
 				flow.EgressPort,
 			)
 
-			throughputMap.Put(ctx, flowKey, fmt.Sprintf("%.f", throughputBps))
+			throughputMap.Put(ctx, flowKey, fmt.Sprintf("%.f", throughputKbps))
 
 			log.Printf(
-				"[switch=%s window=%d] flow %d→%d: %.2f Mbps",
+				"[switch=%s window=%d] flow %d→%d: %.f Kbps",
 				digest.SwitchID,
 				digest.WindowStartNS,
 				flow.IngressPort,
 				flow.EgressPort,
-				throughputBps/1e6,
+				throughputKbps,
 			)
 		}
 	}
