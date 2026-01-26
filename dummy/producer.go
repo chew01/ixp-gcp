@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/rand/v2"
 	"time"
 
 	"github.com/segmentio/kafka-go"
@@ -32,19 +31,27 @@ type Record struct {
 	Flows         []Flow `json:"flows"`
 }
 
+func NewDummyProducer(writer *kafka.Writer) *DummyProducer {
+	return &DummyProducer{
+		topic:    Topic,
+		switchID: SwitchId,
+		kafka:    writer,
+	}
+}
+
 func (p *DummyProducer) Run(ctx context.Context) {
 	for {
 		windowStartNs := time.Now().UnixNano()
-		time.Sleep(WindowSec * time.Second)
+		time.Sleep(ProduceWindowSec * time.Second)
 		windowEndNs := time.Now().UnixNano()
 
-		flows := make([]Flow, FlowsPerWindow)
-		for i := 0; i < FlowsPerWindow; i++ {
+		flows := make([]Flow, FlowsPerProduceWindow)
+		for i := 0; i < FlowsPerProduceWindow; i++ {
 			f := Flow{
-				IngressPort: randRange(1, 4),
-				EgressPort:  randRange(5, 8),
-				VlanID:      randChoice([]int{100, 200, 300}),
-				Bytes:       uint64(randRange(5e5, 2e6)),
+				IngressPort: RandRange(1, 4),
+				EgressPort:  RandRange(5, 8),
+				VlanID:      RandChoice([]int{100, 200, 300}),
+				Bytes:       uint64(RandRange(5e5, 2e6)),
 			}
 			flows[i] = f
 		}
@@ -72,13 +79,4 @@ func (p *DummyProducer) Run(ctx context.Context) {
 		}
 		log.Printf("Produced %d flows", len(flows))
 	}
-}
-
-// randRange returns random number in range min to max inclusive
-func randRange(min int, max int) int {
-	return rand.IntN(max+1-min) + min
-}
-
-func randChoice(choices []int) int {
-	return choices[rand.IntN(len(choices))]
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"math/rand/v2"
 	"net"
 	"os"
 
@@ -13,8 +14,10 @@ import (
 
 const Topic = "switch-traffic-digests"
 const SwitchId = "sw-1"
-const FlowsPerWindow = 5
-const WindowSec = 1
+const FlowsPerProduceWindow = 5
+const ProduceWindowSec = 1
+const BidsPerBidWindow = 10
+const BidWindowSec = 30
 
 func main() {
 	kafkaBootstrap := os.Getenv("KAFKA_BOOTSTRAP")
@@ -22,14 +25,16 @@ func main() {
 		log.Fatal("KAFKA_BOOTSTRAP env var not set")
 	}
 
-	writer := kafka.Writer{
+	writer := &kafka.Writer{
 		Addr:     kafka.TCP(kafkaBootstrap),
 		Topic:    Topic,
 		Balancer: &kafka.LeastBytes{},
 	}
 	defer writer.Close()
 
-	producer := DummyProducer{switchID: SwitchId, kafka: &writer}
+	bidder := NewDummyBidder("http://api-gateway/bids")
+
+	producer := NewDummyProducer(writer)
 	s := grpc.NewServer()
 	pb.RegisterVirtualCircuitServer(s, &DummySwitch{})
 
@@ -40,8 +45,18 @@ func main() {
 
 	ctx := context.Background()
 	go producer.Run(ctx)
+	go bidder.Run(ctx)
 
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
+}
+
+// RandRange returns random number in range min to max inclusive
+func RandRange(min int, max int) int {
+	return rand.IntN(max+1-min) + min
+}
+
+func RandChoice(choices []int) int {
+	return choices[rand.IntN(len(choices))]
 }

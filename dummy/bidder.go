@@ -1,3 +1,84 @@
 package main
 
-type DummyBidder struct{}
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"time"
+)
+
+type DummyBidder struct {
+	url  string
+	http *http.Client
+}
+
+type Bid struct {
+	IngressPort *uint64 `json:"ingress_port"`
+	EgressPort  *uint64 `json:"egress_port"` // maps to auction
+	VlanID      *int    `json:"vlan_id"`
+	Units       *uint64 `json:"units"`      // bandwidth units (kbps)
+	UnitPrice   *int    `json:"unit_price"` // price per unit
+}
+
+func NewDummyBidder(url string) *DummyBidder {
+	return &DummyBidder{
+		url:  url,
+		http: &http.Client{},
+	}
+}
+
+func (b *DummyBidder) Run(ctx context.Context) {
+	for {
+		for i := 0; i < BidsPerBidWindow; i++ {
+			ingressPort := uint64(RandRange(0, 11))
+			egressPort := uint64(RandRange(0, 11))
+			vlanID := RandRange(0, 11)
+			units := uint64(RandRange(0, 100))
+			unitPrice := RandRange(0, 100)
+
+			bid := &Bid{
+				IngressPort: &ingressPort,
+				EgressPort:  &egressPort,
+				VlanID:      &vlanID,
+				Units:       &units,
+				UnitPrice:   &unitPrice,
+			}
+
+			if err := b.SubmitBid(ctx, bid); err != nil {
+				log.Printf("Failed to submit bid: %v", err)
+			}
+		}
+
+		log.Printf("Submitted %d bids", BidsPerBidWindow)
+		time.Sleep(BidWindowSec * time.Second)
+	}
+}
+
+func (b *DummyBidder) SubmitBid(ctx context.Context, bid *Bid) error {
+	body, err := json.Marshal(bid)
+	if err != nil {
+		return fmt.Errorf("failed to marshal bid: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", b.url, bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := b.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to submit bid: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to submit bid: %v, response status: %v, body: %v", bid, resp.StatusCode, string(body))
+	}
+
+	return nil
+}
