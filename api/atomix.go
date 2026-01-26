@@ -29,8 +29,9 @@ func (s *AtomixFlowStore) Get(ctx context.Context, flowKey string) (string, erro
 
 type AtomixBidStore struct{}
 
-func (s *AtomixBidStore) Put(ctx context.Context, userID string, units int64, unitPrice float64) error {
-	bidMap, err := atomix.Map[string, string]("bid-map").
+func (s *AtomixBidStore) Put(ctx context.Context, bid Bid) error {
+	mapID := fmt.Sprintf("bids-%d", *bid.EgressPort)
+	bidMap, err := atomix.Map[string, string](mapID).
 		Codec(generic.Scalar[string]()).
 		Get(ctx)
 	if err != nil {
@@ -38,18 +39,20 @@ func (s *AtomixBidStore) Put(ctx context.Context, userID string, units int64, un
 		return err
 	}
 
-	bidValue := fmt.Sprintf("%d|%.4f", units, unitPrice)
-	_, err = bidMap.Put(ctx, userID, bidValue)
+	identifier := fmt.Sprintf("%d|%d", *bid.IngressPort, *bid.VlanID)
+	bidValue := fmt.Sprintf("%d|%d", *bid.Units, *bid.UnitPrice)
+	log.Printf("Putting %s to %s", bidValue, identifier)
+	_, err = bidMap.Put(ctx, identifier, bidValue)
 	if err != nil {
-		log.Printf("Error putting bid for user %s: %v", userID, err)
+		log.Printf("Error putting bid for ingress port %d VLAN ID %d: %v", bid.IngressPort, bid.VlanID, err)
 		return err
 	}
 
-	len, err := bidMap.Len(ctx)
+	length, err := bidMap.Len(ctx)
 	if err != nil {
 		log.Printf("Error getting bid map length: %v", err)
-		len = -1
+	} else {
+		log.Printf("%d bids in %s", length, mapID)
 	}
-	log.Printf("%d bids", len)
 	return nil
 }

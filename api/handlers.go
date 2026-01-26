@@ -101,22 +101,38 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validation
-	if bid.UserID == "" {
-		http.Error(w, "user_id is required", http.StatusBadRequest)
+	if bid.IngressPort == nil {
+		http.Error(w, "ingress port is required", http.StatusBadRequest)
 		return
 	}
-	if bid.Units <= 0 {
+	if bid.EgressPort == nil {
+		http.Error(w, "egress port is required", http.StatusBadRequest)
+		return
+	}
+	if bid.VlanID == nil {
+		http.Error(w, "vlan id is required", http.StatusBadRequest)
+		return
+	}
+	if bid.Units == nil {
+		http.Error(w, "units is required", http.StatusBadRequest)
+		return
+	}
+	if bid.UnitPrice == nil {
+		http.Error(w, "unit price is required", http.StatusBadRequest)
+		return
+	}
+	if *bid.Units <= 0 {
 		http.Error(w, "units must be > 0", http.StatusBadRequest)
 		return
 	}
-	if bid.UnitPrice <= 0 {
+	if *bid.UnitPrice <= 0 {
 		http.Error(w, "unit_price must be > 0", http.StatusBadRequest)
 		return
 	}
 
 	ctx := r.Context()
 
-	err := s.bs.Put(ctx, bid.UserID, bid.Units, bid.UnitPrice)
+	err := s.bs.Put(ctx, bid)
 	if err != nil {
 		log.Printf("failed to store bid: %v", err)
 		http.Error(w, "failed to store bid", http.StatusInternalServerError)

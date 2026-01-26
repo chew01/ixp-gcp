@@ -34,6 +34,7 @@ func main() {
 
 	topic := "switch-traffic-digests"
 
+	// TODO: make sure kube telemetry depends on kafka health
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{kafkaBootstrap},
 		Topic:   topic,

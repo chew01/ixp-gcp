@@ -1,0 +1,47 @@
+### 0->0, expect 10
+POST http://localhost/bids
+Content-Type: application/json
+
+{
+  "ingress_port": 0,
+  "egress_port": 0,
+  "vlan_id": 10,
+  "units": 20,
+  "unit_price": 10
+}
+
+### 1->0, expect 70
+POST http://localhost/bids
+Content-Type: application/json
+
+{
+  "ingress_port": 1,
+  "egress_port": 0,
+  "vlan_id": 10,
+  "units": 70,
+  "unit_price": 20
+}
+
+### 2->0, expect 20
+POST http://localhost/bids
+Content-Type: application/json
+
+{
+  "ingress_port": 2,
+  "egress_port": 0,
+  "vlan_id": 20,
+  "units": 40,
+  "unit_price": 10
+}
+
+### 10->10, expect 50
+POST http://localhost/bids
+Content-Type: application/json
+
+{
+  "ingress_port": 10,
+  "egress_port": 10,
+  "vlan_id": 20,
+  "units": 50,
+  "unit_price": 15
+}

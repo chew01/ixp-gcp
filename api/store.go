@@ -8,5 +8,5 @@ type FlowStore interface {
 }
 
 type BidStore interface {
-	Put(ctx context.Context, userID string, units int64, unitPrice float64) error
+	Put(ctx context.Context, bid Bid) error
 }

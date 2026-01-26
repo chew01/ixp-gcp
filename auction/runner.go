@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"log"
 	"strconv"
 	"strings"
@@ -34,23 +37,26 @@ func (r *AuctionRunner) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			r.runOnce(ctx)
+			for i := 0; i < 12; i++ { // TODO: get number of ports from somewhere
+				r.runOnce(ctx, uint64(100), uint64(i))
+			}
 		case <-ctx.Done():
 			log.Println("Auction runner shutting down")
 			return
 		}
+		// TODO: remove previous allocs each round
 	}
 }
 
-func (r *AuctionRunner) runOnce(ctx context.Context) {
+func (r *AuctionRunner) runOnce(ctx context.Context, capacityUnits uint64, egressPort uint64) {
 	intervalID := currentIntervalID(r.interval)
 
-	log.Printf("Running auction for interval %s", intervalID)
-
-	capacityUnits := int64(100) // TODO: replace with variable
+	log.Printf("[Auction %d] Interval %s running", egressPort, intervalID)
 
 	var bids []models.Bid
-	bidMap, err := atomix.Map[string, string]("bid-map").
+
+	mapID := fmt.Sprintf("bids-%d", egressPort)
+	bidMap, err := atomix.Map[string, string](mapID).
 		Codec(generic.Scalar[string]()).
 		Get(ctx)
 	if err != nil {
@@ -63,34 +69,46 @@ func (r *AuctionRunner) runOnce(ctx context.Context) {
 		return
 	}
 
-	log.Println("Listing bids from Atomix")
-
 	for {
 		entry, err := list.Next()
 		if err != nil {
-			log.Printf("Error getting next bid: %v", err)
+			if !errors.Is(err, io.EOF) {
+				log.Printf("Error getting next bid: %v", err)
+			}
 			break
 		}
 
-		key := any(entry.Key()).(string)
-		value := any(entry.Value()).(string)
-		parts := strings.Split(value, "|")
+		key := any(entry.Key).(string)
+		value := any(entry.Value).(string)
+		keyParts := strings.Split(key, "|")
+		valueParts := strings.Split(value, "|")
 
-		units, err := strconv.ParseInt(parts[0], 10, 64)
+		ingressPort, err := strconv.ParseUint(keyParts[0], 10, 64)
 		if err != nil {
-			log.Printf("Error parsing units for bid %s: %v", key, err)
+			log.Printf("Error parsing ingress port: %v", err)
+		}
+		vlanID, err := strconv.Atoi(keyParts[1])
+		if err != nil {
+			log.Printf("Error parsing vlan id: %v", err)
+		}
+		units, err := strconv.ParseUint(valueParts[0], 10, 64)
+		if err != nil {
+			log.Printf("Error parsing units: %v", err)
 			continue
 		}
-		unitPrice, err := strconv.ParseFloat(parts[1], 64)
+		unitPrice, err := strconv.Atoi(valueParts[1])
 		if err != nil {
-			log.Printf("Error parsing unit price for bid %s: %v", key, err)
+			log.Printf("Error parsing unit price: %v", err)
 			continue
 		}
+
 		bids = append(bids, models.Bid{
-			UserID:    key,
-			Units:     units,
-			UnitPrice: unitPrice,
-			Interval:  intervalID,
+			IngressPort: ingressPort,
+			EgressPort:  egressPort,
+			VlanID:      vlanID,
+			Units:       units,
+			UnitPrice:   unitPrice,
+			Interval:    intervalID,
 		})
 	}
 
@@ -99,26 +117,33 @@ func (r *AuctionRunner) runOnce(ctx context.Context) {
 		return
 	}
 
-	log.Println("Running auction with", len(bids), "bids for", capacityUnits, "units")
+	log.Printf("[Auction %d] %d bids for %d units", egressPort, len(bids), capacityUnits)
 
 	allocations, clearingPrice := algo.RunUniformPriceAuction(capacityUnits, bids)
 
 	for _, alloc := range allocations {
-		r.client.SetUp(ctx, &proto.SetUpRequest{
-			ASideId:       1, // TODO: map user to Side ID
-			BSideId:       2,
-			BandwidthKbps: uint64(alloc.AllocatedUnits), // TODO: map bandwidth (kbps)
+		resp, err := r.client.SetUp(ctx, &proto.SetUpRequest{
+			ASideId:       alloc.IngressPort,
+			BSideId:       egressPort,
+			BandwidthKbps: alloc.AllocatedUnits, // TODO: map bandwidth (kbps)
 		})
-	}
+		if err != nil {
+			log.Printf("Error setting up: %v", err)
+		}
+		if resp.IsSuccess {
+			log.Printf("[Auction %d] %d allocated %d units", egressPort, alloc.IngressPort, alloc.AllocatedUnits)
+		} else {
+			log.Printf("[Auction %d] %d set up failed", egressPort, alloc.IngressPort)
+		}
 
-	log.Println("Clearing price:", clearingPrice)
+	}
 
 	err = bidMap.Clear(ctx)
 	if err != nil {
 		log.Printf("Error clearing bids: %v", err)
 	}
 
-	log.Printf("Auction completed for interval %s", intervalID)
+	log.Printf("[Auction %d] Interval %s clearing price %d", egressPort, intervalID, clearingPrice)
 }
 
 func currentIntervalID(interval time.Duration) string {

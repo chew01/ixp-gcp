@@ -6,7 +6,7 @@ import (
 	"github.com/chew01/ixp-gcp/auction/models"
 )
 
-func RunUniformPriceAuction(capacity int64, bids []models.Bid) ([]models.Allocation, float64) {
+func RunUniformPriceAuction(capacity uint64, bids []models.Bid) ([]models.Allocation, int) {
 	// Sort bids by unit price DESC
 	sort.Slice(bids, func(i, j int) bool {
 		return bids[i].UnitPrice > bids[j].UnitPrice
@@ -16,7 +16,7 @@ func RunUniformPriceAuction(capacity int64, bids []models.Bid) ([]models.Allocat
 	remaining := capacity
 
 	// First pass: find clearing price
-	var clearingPrice float64
+	var clearingPrice int
 
 	for _, bid := range bids {
 		if remaining <= 0 {
@@ -31,16 +31,18 @@ func RunUniformPriceAuction(capacity int64, bids []models.Bid) ([]models.Allocat
 
 	// Second pass: allocate
 	var marginalBids []models.Bid
-	var marginalDemand int64
+	var marginalDemand uint64
 
 	for _, bid := range bids {
 		if bid.UnitPrice > clearingPrice {
 			// Fully allocate
 			allocations = append(allocations, models.Allocation{
-				UserID:         bid.UserID,
+				IngressPort:    bid.IngressPort,
+				EgressPort:     bid.EgressPort,
+				VlanID:         bid.VlanID,
 				AllocatedUnits: bid.Units,
-				Interval:       bid.Interval,
 				ClearingPrice:  clearingPrice,
+				Interval:       bid.Interval,
 			})
 			remaining -= bid.Units
 		} else if bid.UnitPrice == clearingPrice {
@@ -55,10 +57,12 @@ func RunUniformPriceAuction(capacity int64, bids []models.Bid) ([]models.Allocat
 			allocated := bid.Units * remaining / marginalDemand
 
 			allocations = append(allocations, models.Allocation{
-				UserID:         bid.UserID,
+				IngressPort:    bid.IngressPort,
+				EgressPort:     bid.EgressPort,
+				VlanID:         bid.VlanID,
 				AllocatedUnits: allocated,
-				Interval:       bid.Interval,
 				ClearingPrice:  clearingPrice,
+				Interval:       bid.Interval,
 			})
 		}
 	}

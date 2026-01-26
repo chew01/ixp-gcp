@@ -17,7 +17,7 @@ RUN go mod download
 COPY . .
 
 # Build the Go binary (static)
-RUN CGO_ENABLED=0 GOOS=linux go build -o auction-runner main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o auction-runner
 
 # ===== STAGE 2: Minimal runtime =====
 FROM alpine:3.22
