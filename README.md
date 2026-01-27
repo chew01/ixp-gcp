@@ -25,6 +25,17 @@ Schema v1:
 - Install Helm
 - Install Helm charts for Atomix, Prometheus, Grafana
 
+```bash
+# Helm repos
+helm repo add atomix https://atomix.github.io/charts.atomix.io
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo update
+```
+
 ### Design
 - Throughput for bids is in kbps
 - Throughput for telemetry entries is coerced to nearest kbps
+
+### References
+- [Atomix](https://atomix.github.io)
