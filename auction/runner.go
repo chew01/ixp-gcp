@@ -23,7 +23,7 @@ type AuctionRunner struct {
 	interval time.Duration
 }
 
-func NewAuctionRunner(ctx context.Context, client proto.VirtualCircuitClient, interval time.Duration) *AuctionRunner {
+func NewAuctionRunner(_ context.Context, client proto.VirtualCircuitClient, interval time.Duration) *AuctionRunner {
 	return &AuctionRunner{
 		client:   client,
 		interval: interval,
@@ -53,7 +53,7 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacityUnits uint64, egres
 
 	log.Printf("[Auction %d] Interval %s running", egressPort, intervalID)
 
-	var bids []models.Bid
+	var bids []models.AuctionBid
 
 	mapID := fmt.Sprintf("bids-%d", egressPort)
 	bidMap, err := atomix.Map[string, string](mapID).
@@ -87,10 +87,6 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacityUnits uint64, egres
 		if err != nil {
 			log.Printf("Error parsing ingress port: %v", err)
 		}
-		vlanID, err := strconv.Atoi(keyParts[1])
-		if err != nil {
-			log.Printf("Error parsing vlan id: %v", err)
-		}
 		units, err := strconv.ParseUint(valueParts[0], 10, 64)
 		if err != nil {
 			log.Printf("Error parsing units: %v", err)
@@ -102,10 +98,9 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacityUnits uint64, egres
 			continue
 		}
 
-		bids = append(bids, models.Bid{
+		bids = append(bids, models.AuctionBid{
 			IngressPort: ingressPort,
 			EgressPort:  egressPort,
-			VlanID:      vlanID,
 			Units:       units,
 			UnitPrice:   unitPrice,
 			Interval:    intervalID,
@@ -129,6 +124,7 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacityUnits uint64, egres
 		})
 		if err != nil {
 			log.Printf("Error setting up: %v", err)
+			return
 		}
 		if resp.IsSuccess {
 			log.Printf("[Auction %d] %d allocated %d units", egressPort, alloc.IngressPort, alloc.AllocatedUnits)

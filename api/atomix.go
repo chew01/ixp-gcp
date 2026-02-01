@@ -39,12 +39,12 @@ func (s *AtomixBidStore) Put(ctx context.Context, bid Bid) error {
 		return err
 	}
 
-	identifier := fmt.Sprintf("%d|%d", *bid.IngressPort, *bid.VlanID)
+	identifier := fmt.Sprintf("%d", *bid.IngressPort)
 	bidValue := fmt.Sprintf("%d|%d", *bid.Units, *bid.UnitPrice)
 	log.Printf("Putting %s to %s", bidValue, identifier)
 	_, err = bidMap.Put(ctx, identifier, bidValue)
 	if err != nil {
-		log.Printf("Error putting bid for ingress port %d VLAN ID %d: %v", bid.IngressPort, bid.VlanID, err)
+		log.Printf("Error putting bid for ingress port %d: %v", bid.IngressPort, err)
 		return err
 	}
 

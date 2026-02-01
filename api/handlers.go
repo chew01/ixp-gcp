@@ -70,7 +70,7 @@ func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-func (s *Server) getMetrics(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getMetrics(w http.ResponseWriter, _ *http.Request) {
 	var metrics strings.Builder
 	for i := 1; i <= 4; i++ {
 		for j := 5; j <= 8; j++ {
@@ -107,10 +107,6 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 	}
 	if bid.EgressPort == nil {
 		http.Error(w, "egress port is required", http.StatusBadRequest)
-		return
-	}
-	if bid.VlanID == nil {
-		http.Error(w, "vlan id is required", http.StatusBadRequest)
 		return
 	}
 	if bid.Units == nil {

@@ -14,7 +14,6 @@ Schema v1:
     {
       "ingress_port": 1,
       "egress_port": 5,
-      "vlan_id": 100,
       "bytes": 123456
     }
   ]

@@ -19,9 +19,8 @@ type DummyBidder struct {
 type Bid struct {
 	IngressPort *uint64 `json:"ingress_port"`
 	EgressPort  *uint64 `json:"egress_port"` // maps to auction
-	VlanID      *int    `json:"vlan_id"`
-	Units       *uint64 `json:"units"`      // bandwidth units (kbps)
-	UnitPrice   *int    `json:"unit_price"` // price per unit
+	Units       *uint64 `json:"units"`       // bandwidth units (kbps)
+	UnitPrice   *int    `json:"unit_price"`  // price per unit
 }
 
 func NewDummyBidder(url string) *DummyBidder {
@@ -36,14 +35,12 @@ func (b *DummyBidder) Run(ctx context.Context) {
 		for i := 0; i < BidsPerBidWindow; i++ {
 			ingressPort := uint64(RandRange(0, 11))
 			egressPort := uint64(RandRange(0, 11))
-			vlanID := RandRange(0, 11)
 			units := uint64(RandRange(0, 100))
 			unitPrice := RandRange(0, 100)
 
 			bid := &Bid{
 				IngressPort: &ingressPort,
 				EgressPort:  &egressPort,
-				VlanID:      &vlanID,
 				Units:       &units,
 				UnitPrice:   &unitPrice,
 			}

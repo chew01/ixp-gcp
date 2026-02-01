@@ -19,7 +19,6 @@ type DummyProducer struct {
 type Flow struct {
 	IngressPort int    `json:"ingress_port"`
 	EgressPort  int    `json:"egress_port"`
-	VlanID      int    `json:"vlan_id"`
 	Bytes       uint64 `json:"bytes"`
 }
 
@@ -50,7 +49,6 @@ func (p *DummyProducer) Run(ctx context.Context) {
 			f := Flow{
 				IngressPort: RandRange(1, 4),
 				EgressPort:  RandRange(5, 8),
-				VlanID:      RandChoice([]int{100, 200, 300}),
 				Bytes:       uint64(RandRange(5e5, 2e6)),
 			}
 			flows[i] = f
@@ -75,7 +73,7 @@ func (p *DummyProducer) Run(ctx context.Context) {
 			Value: value,
 		})
 		if err != nil {
-			log.Fatal(err)
+			log.Printf("Failed to write message to Kafka: %v", err)
 		}
 		log.Printf("Produced %d flows", len(flows))
 	}

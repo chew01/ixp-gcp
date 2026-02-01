@@ -26,12 +26,10 @@ while True:
     for _ in range(FLOWS_PER_WINDOW):
         ingress = random.randint(1, 4)
         egress = random.randint(5, 8)
-        vlan = random.choice([100, 200, 300])
 
         flows.append({
             "ingress_port": ingress,
             "egress_port": egress,
-            "vlan_id": vlan,
             "bytes": random.randint(500_000, 2_000_000)
         })
 
