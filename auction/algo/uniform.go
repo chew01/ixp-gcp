@@ -54,6 +54,9 @@ func RunUniformPriceAuction(capacity uint64, bids []models.AuctionBid) ([]models
 	if marginalDemand > 0 && remaining > 0 {
 		for _, bid := range marginalBids {
 			allocated := bid.Units * remaining / marginalDemand
+			if allocated > bid.Units {
+				allocated = bid.Units // give at most what was asked for
+			}
 
 			allocations = append(allocations, models.Allocation{
 				IngressPort:    bid.IngressPort,
