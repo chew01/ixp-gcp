@@ -6,7 +6,7 @@ import (
 	"github.com/chew01/ixp-gcp/auction/models"
 )
 
-func RunUniformPriceAuction(capacity uint64, bids []models.AuctionBid) ([]models.Allocation, int) {
+func RunUniformPriceAuction(intervalID string, capacity uint64, bids []models.AuctionBid) ([]models.Allocation, int) {
 	// Sort bids by unit price DESC
 	sort.Slice(bids, func(i, j int) bool {
 		return bids[i].UnitPrice > bids[j].UnitPrice
@@ -19,7 +19,12 @@ func RunUniformPriceAuction(capacity uint64, bids []models.AuctionBid) ([]models
 	var clearingPrice int
 
 	for _, bid := range bids {
-		if remaining <= 0 {
+		if remaining == 0 {
+			break
+		}
+		if bid.Units >= remaining { // unsigned integer will underflow
+			clearingPrice = bid.UnitPrice
+			remaining = 0
 			break
 		}
 		remaining -= bid.Units
@@ -41,9 +46,13 @@ func RunUniformPriceAuction(capacity uint64, bids []models.AuctionBid) ([]models
 				EgressPort:     bid.EgressPort,
 				AllocatedUnits: bid.Units,
 				ClearingPrice:  clearingPrice,
-				Interval:       bid.Interval,
+				Interval:       intervalID,
 			})
-			remaining -= bid.Units
+			if bid.Units >= remaining {
+				remaining = 0
+			} else {
+				remaining -= bid.Units
+			}
 		} else if bid.UnitPrice == clearingPrice {
 			marginalBids = append(marginalBids, bid)
 			marginalDemand += bid.Units
@@ -63,7 +72,7 @@ func RunUniformPriceAuction(capacity uint64, bids []models.AuctionBid) ([]models
 				EgressPort:     bid.EgressPort,
 				AllocatedUnits: allocated,
 				ClearingPrice:  clearingPrice,
-				Interval:       bid.Interval,
+				Interval:       intervalID,
 			})
 		}
 	}

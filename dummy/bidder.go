@@ -33,10 +33,10 @@ func NewDummyBidder(url string) *DummyBidder {
 func (b *DummyBidder) Run(ctx context.Context) {
 	for {
 		for i := 0; i < BidsPerBidWindow; i++ {
-			ingressPort := uint64(RandRange(0, 11))
-			egressPort := uint64(RandRange(0, 11))
+			ingressPort := uint64(i)
+			egressPort := uint64(10)
 			units := uint64(RandRange(0, 100))
-			unitPrice := RandRange(0, 100)
+			unitPrice := RandRange(1, 100)
 
 			bid := &Bid{
 				IngressPort: &ingressPort,

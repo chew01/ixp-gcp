@@ -6,7 +6,7 @@ type AuctionBid struct {
 	EgressPort  uint64 `json:"egress_port"` // maps to auction
 	Units       uint64 `json:"units"`       // bandwidth units (kbps)
 	UnitPrice   int    `json:"unit_price"`  // price per unit
-	Interval    string
+	IsVirtual   bool
 }
 
 // Allocation represents auction output

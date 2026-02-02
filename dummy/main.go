@@ -14,7 +14,7 @@ import (
 
 const Topic = "switch-traffic-digests"
 const SwitchId = "sw-1"
-const FlowsPerProduceWindow = 5
+const FlowsPerProduceWindow = 10
 const ProduceWindowSec = 1
 const BidsPerBidWindow = 10
 const BidWindowSec = 30

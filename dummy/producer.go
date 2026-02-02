@@ -47,8 +47,8 @@ func (p *DummyProducer) Run(ctx context.Context) {
 		flows := make([]Flow, FlowsPerProduceWindow)
 		for i := 0; i < FlowsPerProduceWindow; i++ {
 			f := Flow{
-				IngressPort: RandRange(1, 4),
-				EgressPort:  RandRange(5, 8),
+				IngressPort: i,  // ingress port 0-9
+				EgressPort:  10, // currently only bid on egress port 10
 				Bytes:       uint64(RandRange(5e5, 2e6)),
 			}
 			flows[i] = f

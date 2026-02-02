@@ -8,8 +8,8 @@ import (
 
 func RunReservationPriceAuction(intervalID string, capacity uint64, bids []models.AuctionBid, rPrice int) ([]models.Allocation, int) {
 	bids = append(bids, models.AuctionBid{
-		IngressPort: 0,
-		EgressPort:  0,
+		IngressPort: 99,
+		EgressPort:  10,
 		Units:       capacity,
 		UnitPrice:   rPrice,
 		IsVirtual:   true,
@@ -27,9 +27,15 @@ func RunReservationPriceAuction(intervalID string, capacity uint64, bids []model
 	var clearingPrice int
 
 	for _, bid := range bids {
-		if remaining <= 0 {
+		if remaining == 0 {
 			break
 		}
+		if bid.Units >= remaining { // unsigned integer will underflow
+			clearingPrice = bid.UnitPrice
+			remaining = 0
+			break
+		}
+
 		remaining -= bid.Units
 		clearingPrice = bid.UnitPrice
 	}
@@ -51,7 +57,11 @@ func RunReservationPriceAuction(intervalID string, capacity uint64, bids []model
 				ClearingPrice:  clearingPrice,
 				Interval:       intervalID,
 			})
-			remaining -= bid.Units
+			if bid.Units >= remaining {
+				remaining = 0
+			} else {
+				remaining -= bid.Units
+			}
 		} else if bid.UnitPrice == clearingPrice {
 			marginalBids = append(marginalBids, bid)
 			marginalDemand += bid.Units

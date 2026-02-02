@@ -37,7 +37,7 @@ func (r *AuctionRunner) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			for i := 0; i < 12; i++ { // TODO: get number of ports from somewhere
+			for i := 0; i < 11; i++ { // TODO: get number of ports from somewhere
 				r.runOnce(ctx, uint64(100), uint64(i))
 			}
 		case <-ctx.Done():
@@ -48,7 +48,7 @@ func (r *AuctionRunner) Run(ctx context.Context) {
 	}
 }
 
-func (r *AuctionRunner) runOnce(ctx context.Context, capacityUnits uint64, egressPort uint64) {
+func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort uint64) {
 	intervalID := currentIntervalID(r.interval)
 
 	log.Printf("[Auction %d] Interval %s running", egressPort, intervalID)
@@ -103,18 +103,18 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacityUnits uint64, egres
 			EgressPort:  egressPort,
 			Units:       units,
 			UnitPrice:   unitPrice,
-			Interval:    intervalID,
 		})
 	}
 
-	if capacityUnits <= 0 || len(bids) == 0 {
+	if capacity <= 0 || len(bids) == 0 {
 		log.Println("No capacity or no bids, skipping auction")
 		return
 	}
 
-	log.Printf("[Auction %d] %d bids for %d units", egressPort, len(bids), capacityUnits)
+	log.Printf("[Auction %d] %d bids for %d units", egressPort, len(bids), capacity)
 
-	allocations, clearingPrice := algo.RunUniformPriceAuction(capacityUnits, bids)
+	// allocations, clearingPrice := algo.RunUniformPriceAuction(intervalID, capacity, bids)
+	allocations, clearingPrice := algo.RunReservationPriceAuction(intervalID, capacity, bids, 50)
 
 	for _, alloc := range allocations {
 		resp, err := r.client.SetUp(ctx, &proto.SetUpRequest{
