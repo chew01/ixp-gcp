@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/chew01/ixp-gcp/shared/scenario"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -14,6 +15,7 @@ type DummyProducer struct {
 	topic    string
 	switchID string
 	kafka    *kafka.Writer
+	scenario *scenario.Scenario
 }
 
 type Flow struct {
@@ -30,11 +32,12 @@ type Record struct {
 	Flows         []Flow `json:"flows"`
 }
 
-func NewDummyProducer(writer *kafka.Writer) *DummyProducer {
+func NewDummyProducer(writer *kafka.Writer, scenario *scenario.Scenario) *DummyProducer {
 	return &DummyProducer{
 		topic:    Topic,
-		switchID: SwitchId,
+		switchID: scenario.Switches[0].ID,
 		kafka:    writer,
+		scenario: scenario,
 	}
 }
 
@@ -44,25 +47,27 @@ func (p *DummyProducer) Run(ctx context.Context) {
 		time.Sleep(ProduceWindowSec * time.Second)
 		windowEndNs := time.Now().UnixNano()
 
-		flows := make([]Flow, FlowsPerProduceWindow)
-		for i := 0; i < FlowsPerProduceWindow; i++ {
-			f := Flow{
-				IngressPort: i,  // ingress port 0-9
-				EgressPort:  10, // currently only bid on egress port 10
-				Bytes:       uint64(RandRange(5e5, 2e6)),
+		var flows []Flow
+		for _, inPort := range p.scenario.Switches[0].IngressPorts {
+			for _, ePort := range p.scenario.Switches[0].EgressPorts {
+				f := Flow{
+					IngressPort: inPort,
+					EgressPort:  ePort,
+					Bytes:       uint64(RandRange(5e5, 2e6)),
+				}
+				flows = append(flows, f)
 			}
-			flows[i] = f
 		}
 
 		r := Record{
 			SchemaVersion: 1,
-			SwitchID:      SwitchId,
+			SwitchID:      p.scenario.Switches[0].ID,
 			WindowStartNS: windowStartNs,
 			WindowEndNS:   windowEndNs,
 			Flows:         flows,
 		}
 
-		key := fmt.Sprintf("%s|%d", SwitchId, windowStartNs)
+		key := fmt.Sprintf("%s|%d", p.scenario.Switches[0].ID, windowStartNs)
 		value, err := json.Marshal(r)
 		if err != nil {
 			log.Fatal(err)

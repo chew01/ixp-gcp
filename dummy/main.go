@@ -8,21 +8,29 @@ import (
 	"os"
 
 	pb "github.com/chew01/ixp-gcp/proto"
+	"github.com/chew01/ixp-gcp/shared/scenario"
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/grpc"
 )
 
 const Topic = "switch-traffic-digests"
-const SwitchId = "sw-1"
-const FlowsPerProduceWindow = 10
 const ProduceWindowSec = 1
-const BidsPerBidWindow = 10
 const BidWindowSec = 30
 
 func main() {
 	kafkaBootstrap := os.Getenv("KAFKA_BOOTSTRAP")
 	if kafkaBootstrap == "" {
-		log.Fatal("KAFKA_BOOTSTRAP env var not set")
+		kafkaBootstrap = "ixp-kafka-kafka-bootstrap:9092"
+	}
+
+	scenarioPath := os.Getenv("SCENARIO_PATH")
+	if scenarioPath == "" {
+		scenarioPath = "/etc/scenario/scenario.yaml"
+	}
+
+	scene, err := scenario.Load(scenarioPath)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	writer := &kafka.Writer{
@@ -32,9 +40,9 @@ func main() {
 	}
 	defer writer.Close()
 
-	bidder := NewDummyBidder("http://api-gateway/bids")
+	bidder := NewDummyBidder("http://api-gateway/bids", scene)
 
-	producer := NewDummyProducer(writer)
+	producer := NewDummyProducer(writer, scene)
 	s := grpc.NewServer()
 	pb.RegisterVirtualCircuitServer(s, &DummySwitch{})
 

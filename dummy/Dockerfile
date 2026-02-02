@@ -10,14 +10,13 @@ WORKDIR /app
 # Copy go.mod and go.sum first for caching
 COPY go.mod go.sum ./
 
-# Download dependencies
-RUN go mod download
+COPY vendor ./vendor
 
 # Copy the source code
 COPY . .
 
 # Build the Go binary (static)
-RUN CGO_ENABLED=0 GOOS=linux go build -o dummy-producer
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o dummy-producer
 
 # ===== STAGE 2: Minimal runtime =====
 FROM alpine:3.22

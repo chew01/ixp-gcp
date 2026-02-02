@@ -22,3 +22,14 @@ spec:
         env:
           - name: GRPC_SERVER_ADDR
             value: "dummy-producer:50051"
+          - name: SCENARIO_PATH
+            value: /etc/scenario/scenario.yaml
+        volumeMounts:
+          - name: scenario-volume
+            mountPath: /etc/scenario
+            readOnly: true
+
+      volumes:
+        - name: scenario-volume
+          configMap:
+            name: test-scenario

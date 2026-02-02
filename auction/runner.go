@@ -15,18 +15,21 @@ import (
 	"github.com/chew01/ixp-gcp/auction/algo"
 	"github.com/chew01/ixp-gcp/auction/models"
 	"github.com/chew01/ixp-gcp/proto"
+	"github.com/chew01/ixp-gcp/shared/scenario"
 )
 
 // AuctionRunner owns the auction loop
 type AuctionRunner struct {
 	client   proto.VirtualCircuitClient // TODO: for multiple switches, use multiple clients
 	interval time.Duration
+	scenario *scenario.Scenario
 }
 
-func NewAuctionRunner(_ context.Context, client proto.VirtualCircuitClient, interval time.Duration) *AuctionRunner {
+func NewAuctionRunner(_ context.Context, client proto.VirtualCircuitClient, interval time.Duration, scenario *scenario.Scenario) *AuctionRunner {
 	return &AuctionRunner{
 		client:   client,
 		interval: interval,
+		scenario: scenario,
 	}
 }
 
@@ -37,8 +40,8 @@ func (r *AuctionRunner) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			for i := 0; i < 11; i++ { // TODO: get number of ports from somewhere
-				r.runOnce(ctx, uint64(100), uint64(i))
+			for _, port := range r.scenario.Switches[0].EgressPorts {
+				r.runOnce(ctx, r.scenario.Switches[0].MaxCapacity, uint64(port))
 			}
 		case <-ctx.Done():
 			log.Println("Auction runner shutting down")
@@ -114,7 +117,7 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 	log.Printf("[Auction %d] %d bids for %d units", egressPort, len(bids), capacity)
 
 	// allocations, clearingPrice := algo.RunUniformPriceAuction(intervalID, capacity, bids)
-	allocations, clearingPrice := algo.RunReservationPriceAuction(intervalID, capacity, bids, 50)
+	allocations, clearingPrice := algo.RunReservationPriceAuction(intervalID, egressPort, capacity, bids, r.scenario.Parameters["reservation_price"])
 
 	for _, alloc := range allocations {
 		resp, err := r.client.SetUp(ctx, &proto.SetUpRequest{

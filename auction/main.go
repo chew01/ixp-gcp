@@ -7,6 +7,7 @@ import (
 	"time"
 
 	pb "github.com/chew01/ixp-gcp/proto"
+	"github.com/chew01/ixp-gcp/shared/scenario"
 	"google.golang.org/grpc/credentials/insecure"
 
 	"google.golang.org/grpc"
@@ -25,6 +26,16 @@ func main() {
 		log.Fatal("GRPC_SERVER_ADDR env var not set")
 	}
 
+	scenarioPath := os.Getenv("SCENARIO_PATH")
+	if scenarioPath == "" {
+		scenarioPath = "/etc/scenario/scenario.yaml"
+	}
+
+	scene, err := scenario.Load(scenarioPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	conn, err := grpc.NewClient(grpcServerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to create gRPC connection: %v", err)
@@ -32,7 +43,7 @@ func main() {
 	defer conn.Close()
 
 	ctx := context.Background()
-	runner := NewAuctionRunner(ctx, pb.NewVirtualCircuitClient(conn), time.Duration(intervalSeconds)*time.Second)
+	runner := NewAuctionRunner(ctx, pb.NewVirtualCircuitClient(conn), time.Duration(intervalSeconds)*time.Second, scene)
 
 	log.Println("Auction runner started")
 	runner.Run(ctx)

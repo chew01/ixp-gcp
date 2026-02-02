@@ -4,6 +4,9 @@ minikube start
 minikube addons enable ingress
 echo "Minikube started."
 
+kubectl create configmap test-scenario --from-file=scenario.yaml=./etc/scenario/scenario.yaml
+
+
 # API Gateway
 echo "Building API Gateway docker image..."
 docker build -t api-gateway:local ./api-gateway

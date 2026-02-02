@@ -1,4 +1,5 @@
 # API Gateway
+cd auction && go mod vendor && cd ..
 echo "Building Auction runner docker image..."
 docker build -t auction-runner:local ./auction
 echo "Docker image built."

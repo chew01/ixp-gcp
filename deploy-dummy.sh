@@ -1,3 +1,4 @@
+cd dummy && go mod vendor && cd ..
 echo "Building Dummy docker image..."
 docker build -t dummy-producer:local ./dummy
 echo "Docker image built."

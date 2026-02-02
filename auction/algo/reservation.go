@@ -6,10 +6,10 @@ import (
 	"github.com/chew01/ixp-gcp/auction/models"
 )
 
-func RunReservationPriceAuction(intervalID string, capacity uint64, bids []models.AuctionBid, rPrice int) ([]models.Allocation, int) {
+func RunReservationPriceAuction(intervalID string, egressPort uint64, capacity uint64, bids []models.AuctionBid, rPrice int) ([]models.Allocation, int) {
 	bids = append(bids, models.AuctionBid{
 		IngressPort: 99,
-		EgressPort:  10,
+		EgressPort:  egressPort,
 		Units:       capacity,
 		UnitPrice:   rPrice,
 		IsVirtual:   true,

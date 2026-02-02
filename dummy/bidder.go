@@ -9,11 +9,14 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/chew01/ixp-gcp/shared/scenario"
 )
 
 type DummyBidder struct {
-	url  string
-	http *http.Client
+	url      string
+	http     *http.Client
+	scenario *scenario.Scenario
 }
 
 type Bid struct {
@@ -23,34 +26,40 @@ type Bid struct {
 	UnitPrice   *int    `json:"unit_price"`  // price per unit
 }
 
-func NewDummyBidder(url string) *DummyBidder {
+func NewDummyBidder(url string, scenario *scenario.Scenario) *DummyBidder {
 	return &DummyBidder{
-		url:  url,
-		http: &http.Client{},
+		url:      url,
+		http:     &http.Client{},
+		scenario: scenario,
 	}
 }
 
 func (b *DummyBidder) Run(ctx context.Context) {
 	for {
-		for i := 0; i < BidsPerBidWindow; i++ {
-			ingressPort := uint64(i)
-			egressPort := uint64(10)
-			units := uint64(RandRange(0, 100))
-			unitPrice := RandRange(1, 100)
+		count := 0
+		for _, inPort := range b.scenario.Switches[0].IngressPorts {
+			for _, ePort := range b.scenario.Switches[0].EgressPorts {
+				ingressPort := uint64(inPort)
+				egressPort := uint64(ePort)
+				units := uint64(RandRange(0, 100))
+				unitPrice := RandRange(1, 100)
 
-			bid := &Bid{
-				IngressPort: &ingressPort,
-				EgressPort:  &egressPort,
-				Units:       &units,
-				UnitPrice:   &unitPrice,
-			}
+				bid := &Bid{
+					IngressPort: &ingressPort,
+					EgressPort:  &egressPort,
+					Units:       &units,
+					UnitPrice:   &unitPrice,
+				}
 
-			if err := b.SubmitBid(ctx, bid); err != nil {
-				log.Printf("Failed to submit bid: %v", err)
+				if err := b.SubmitBid(ctx, bid); err != nil {
+					log.Printf("Failed to submit bid: %v", err)
+				} else {
+					count++
+				}
 			}
 		}
 
-		log.Printf("Submitted %d bids", BidsPerBidWindow)
+		log.Printf("Submitted %d bids", count)
 		time.Sleep(BidWindowSec * time.Second)
 	}
 }
