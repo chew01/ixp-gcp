@@ -4,6 +4,7 @@ type Scenario struct {
 	Version                 string   `yaml:"version"`
 	Name                    string   `yaml:"name"`
 	Switches                []Switch `yaml:"switches"`
+	TelemetryInterval       string   `yaml:"telemetry_interval"`
 	AuctionInterval         string   `yaml:"auction_interval"`
 	ReservationPrice        int      `yaml:"reservation_price"`
 	AuctionResultKafkaTopic string   `yaml:"auction_result_kafka_topic"`

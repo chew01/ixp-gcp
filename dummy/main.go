@@ -10,8 +10,6 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-const ProduceWindowSec = 1
-
 func main() {
 	kafkaBootstrap := os.Getenv("KAFKA_BOOTSTRAP")
 	if kafkaBootstrap == "" {

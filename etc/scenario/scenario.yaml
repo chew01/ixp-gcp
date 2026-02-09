@@ -6,6 +6,7 @@ telemetry_kafka_topic: switch-telemetry
 
 reservation_price: 50
 auction_interval: 30s
+telemetry_interval: 1s
 
 switches:
   - id: sw-1

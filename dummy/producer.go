@@ -27,9 +27,13 @@ func NewDummyProducer(writer *kafka.Writer, scenario *scenario.Scenario) *DummyP
 }
 
 func (p *DummyProducer) Run(ctx context.Context) {
+	interval, err := time.ParseDuration(p.scenario.TelemetryInterval)
+	if err != nil {
+		log.Fatal(err)
+	}
 	for {
 		windowStartNs := time.Now().UnixNano()
-		time.Sleep(ProduceWindowSec * time.Second)
+		time.Sleep(interval)
 		windowEndNs := time.Now().UnixNano()
 
 		var flows []shared.Flow
