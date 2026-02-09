@@ -2,25 +2,37 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 
-	"github.com/chew01/ixp-gcp/proto"
+	"github.com/chew01/ixp-gcp/shared"
+	"github.com/segmentio/kafka-go"
 )
 
 type DummySwitch struct {
-	proto.UnimplementedVirtualCircuitServer
+	reader *kafka.Reader
 }
 
-func (s *DummySwitch) SetUp(ctx context.Context, req *proto.SetUpRequest) (*proto.SetUpResponse, error) {
-	log.Printf("SetUp called with request: %+v", req)
-	return &proto.SetUpResponse{
-		IsSuccess: true,
-	}, nil
+func NewDummySwitch(reader *kafka.Reader) *DummySwitch {
+	return &DummySwitch{
+		reader: reader,
+	}
 }
 
-func (s *DummySwitch) TearDown(ctx context.Context, req *proto.TearDownRequest) (*proto.TearDownResponse, error) {
-	log.Printf("TearDown called with request: %+v", req)
-	return &proto.TearDownResponse{
-		IsSuccess: true,
-	}, nil
+func (s *DummySwitch) Run(ctx context.Context) {
+	for {
+		msg, err := s.reader.ReadMessage(ctx)
+		if err != nil {
+			log.Println("Error reading message:", err)
+			continue
+		}
+
+		var record shared.AuctionResultRecord
+		if err := json.Unmarshal(msg.Value, &record); err != nil {
+			log.Println("Error parsing JSON:", err)
+			continue
+		}
+
+		log.Printf("Auction result: %d kbps (%d->%d)", record.BandwidthKbps, record.IngressPort, record.EgressPort)
+	}
 }

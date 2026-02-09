@@ -4,13 +4,10 @@ import (
 	"context"
 	"log"
 	"math/rand/v2"
-	"net"
 	"os"
 
-	pb "github.com/chew01/ixp-gcp/proto"
 	"github.com/chew01/ixp-gcp/shared/scenario"
 	"github.com/segmentio/kafka-go"
-	"google.golang.org/grpc"
 )
 
 const Topic = "switch-traffic-digests"
@@ -41,24 +38,21 @@ func main() {
 	}
 	defer writer.Close()
 
+	reader := kafka.NewReader(kafka.ReaderConfig{
+		Brokers: []string{kafkaBootstrap},
+		Topic:   scene.AuctionResultKafkaTopic,
+		GroupID: "dummy-switch",
+	})
+	defer reader.Close()
+
 	bidder := NewDummyBidder("http://api-gateway/bids", scene)
-
 	producer := NewDummyProducer(writer, scene)
-	s := grpc.NewServer()
-	pb.RegisterVirtualCircuitServer(s, &DummySwitch{})
-
-	lis, err := net.Listen("tcp", ":50051")
-	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
-	}
+	sw := NewDummySwitch(reader)
 
 	ctx := context.Background()
 	go producer.Run(ctx)
 	go bidder.Run(ctx)
-
-	if err := s.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
-	}
+	sw.Run(ctx)
 }
 
 // RandRange returns random number in range min to max inclusive

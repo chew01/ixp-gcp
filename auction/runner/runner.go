@@ -15,6 +15,7 @@ import (
 	"github.com/atomix/go-sdk/pkg/generic"
 	"github.com/chew01/ixp-gcp/auction/algo"
 	"github.com/chew01/ixp-gcp/auction/models"
+	"github.com/chew01/ixp-gcp/shared"
 	"github.com/chew01/ixp-gcp/shared/scenario"
 	"github.com/segmentio/kafka-go"
 )
@@ -135,14 +136,8 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 	log.Printf("[Auction %d] Interval %s clearing price %d", egressPort, intervalID, clearingPrice)
 }
 
-type AuctionResultRecord struct {
-	IngressPort   uint64 `json:"ingress_port"`
-	EgressPort    uint64 `json:"egress_port"`
-	BandwidthKbps uint64 `json:"bandwidth_kbps"`
-}
-
 func (r *AuctionRunner) WriteResults(ctx context.Context, switchID string, ingressPort, egressPort, bandwidthKbps uint64) error {
-	results := AuctionResultRecord{
+	results := shared.AuctionResultRecord{
 		IngressPort:   ingressPort,
 		EgressPort:    egressPort,
 		BandwidthKbps: bandwidthKbps,
