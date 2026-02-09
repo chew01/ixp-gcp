@@ -1,3 +1,4 @@
+cd telemetry && go mod vendor && cd ..
 echo "Building Telemetry docker image..."
 docker build -t telemetry-service:local ./telemetry
 echo "Docker image built."
