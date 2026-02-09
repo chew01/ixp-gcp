@@ -117,7 +117,7 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 	log.Printf("[Auction %d] %d bids for %d units", egressPort, len(bids), capacity)
 
 	// allocations, clearingPrice := algo.RunUniformPriceAuction(intervalID, capacity, bids)
-	allocations, clearingPrice := algo.RunReservationPriceAuction(intervalID, egressPort, capacity, bids, r.scenario.Parameters["reservation_price"])
+	allocations, clearingPrice := algo.RunReservationPriceAuction(intervalID, egressPort, capacity, bids, r.scenario.ReservationPrice)
 
 	for _, alloc := range allocations { // TODO: remove switch constant
 		err := r.WriteResults(ctx, "sw-1", alloc.IngressPort, alloc.EgressPort, alloc.AllocatedUnits)

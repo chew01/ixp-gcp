@@ -35,6 +35,10 @@ func NewDummyBidder(url string, scenario *scenario.Scenario) *DummyBidder {
 }
 
 func (b *DummyBidder) Run(ctx context.Context) {
+	interval, err := time.ParseDuration(b.scenario.AuctionInterval)
+	if err != nil {
+		log.Fatal(err)
+	}
 	for {
 		count := 0
 		for _, inPort := range b.scenario.Switches[0].IngressPorts {
@@ -60,7 +64,7 @@ func (b *DummyBidder) Run(ctx context.Context) {
 		}
 
 		log.Printf("Submitted %d bids", count)
-		time.Sleep(BidWindowSec * time.Second)
+		time.Sleep(interval)
 	}
 }
 

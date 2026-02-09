@@ -12,7 +12,6 @@ import (
 )
 
 type DummyProducer struct {
-	topic    string
 	switchID string
 	kafka    *kafka.Writer
 	scenario *scenario.Scenario
@@ -34,7 +33,6 @@ type Record struct {
 
 func NewDummyProducer(writer *kafka.Writer, scenario *scenario.Scenario) *DummyProducer {
 	return &DummyProducer{
-		topic:    Topic,
 		switchID: scenario.Switches[0].ID,
 		kafka:    writer,
 		scenario: scenario,

@@ -11,7 +11,6 @@ import (
 )
 
 const ProduceWindowSec = 1
-const BidWindowSec = 30
 
 func main() {
 	kafkaBootstrap := os.Getenv("KAFKA_BOOTSTRAP")

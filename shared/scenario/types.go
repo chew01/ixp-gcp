@@ -1,12 +1,13 @@
 package scenario
 
 type Scenario struct {
-	Version                 string         `yaml:"version"`
-	Name                    string         `yaml:"name"`
-	Switches                []Switch       `yaml:"switches"`
-	Parameters              map[string]int `yaml:"parameters"`
-	AuctionResultKafkaTopic string         `yaml:"auction_result_kafka_topic"`
-	TelemetryKafkaTopic     string         `yaml:"telemetry_kafka_topic"`
+	Version                 string   `yaml:"version"`
+	Name                    string   `yaml:"name"`
+	Switches                []Switch `yaml:"switches"`
+	AuctionInterval         string   `yaml:"auction_interval"`
+	ReservationPrice        int      `yaml:"reservation_price"`
+	AuctionResultKafkaTopic string   `yaml:"auction_result_kafka_topic"`
+	TelemetryKafkaTopic     string   `yaml:"telemetry_kafka_topic"`
 }
 
 type Switch struct {

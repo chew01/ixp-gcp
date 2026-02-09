@@ -18,5 +18,16 @@ spec:
       - name: telemetry-service
         image: telemetry-service:local
         env:
-        - name: KAFKA_BOOTSTRAP
-          value: "ixp-kafka-kafka-bootstrap:9092"
+          - name: KAFKA_BOOTSTRAP
+            value: "ixp-kafka-kafka-bootstrap:9092"
+          - name: SCENARIO_PATH
+            value: /etc/scenario/scenario.yaml
+        volumeMounts:
+          - name: scenario-volume
+            mountPath: /etc/scenario
+            readOnly: true
+
+      volumes:
+        - name: scenario-volume
+          configMap:
+            name: test-scenario
