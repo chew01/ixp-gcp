@@ -20,8 +20,8 @@ spec:
       - name: auction-runner
         image: auction-runner:local
         env:
-          - name: GRPC_SERVER_ADDR
-            value: "dummy-producer:50051"
+          - name: KAFKA_BOOTSTRAP
+            value: "ixp-kafka-kafka-bootstrap:9092"
           - name: SCENARIO_PATH
             value: /etc/scenario/scenario.yaml
         volumeMounts:

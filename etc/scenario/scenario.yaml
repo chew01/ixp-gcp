@@ -3,11 +3,12 @@ name: 10i1e
 
 parameters:
   reservation_price: 50
-  auction_interval: 30s
+  auction_interval: 30
 
 switches:
   - id: sw-1
     ingress_ports: [1,2,3,4,5,6,7,8,9,10]
     egress_ports: [0]
+    max_capacity: 100
 
 

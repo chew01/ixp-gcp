@@ -34,9 +34,10 @@ func main() {
 	}
 
 	writer := &kafka.Writer{
-		Addr:     kafka.TCP(kafkaBootstrap),
-		Topic:    Topic,
-		Balancer: &kafka.LeastBytes{},
+		Addr:                   kafka.TCP(kafkaBootstrap),
+		Topic:                  Topic,
+		Balancer:               &kafka.LeastBytes{},
+		AllowAutoTopicCreation: true,
 	}
 	defer writer.Close()
 

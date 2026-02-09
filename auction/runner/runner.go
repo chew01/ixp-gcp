@@ -1,7 +1,8 @@
-package main
+package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,20 +15,20 @@ import (
 	"github.com/atomix/go-sdk/pkg/generic"
 	"github.com/chew01/ixp-gcp/auction/algo"
 	"github.com/chew01/ixp-gcp/auction/models"
-	"github.com/chew01/ixp-gcp/proto"
 	"github.com/chew01/ixp-gcp/shared/scenario"
+	"github.com/segmentio/kafka-go"
 )
 
 // AuctionRunner owns the auction loop
 type AuctionRunner struct {
-	client   proto.VirtualCircuitClient // TODO: for multiple switches, use multiple clients
 	interval time.Duration
 	scenario *scenario.Scenario
+	writer   *kafka.Writer
 }
 
-func NewAuctionRunner(_ context.Context, client proto.VirtualCircuitClient, interval time.Duration, scenario *scenario.Scenario) *AuctionRunner {
+func New(writer *kafka.Writer, interval time.Duration, scenario *scenario.Scenario) *AuctionRunner {
 	return &AuctionRunner{
-		client:   client,
+		writer:   writer,
 		interval: interval,
 		scenario: scenario,
 	}
@@ -47,7 +48,6 @@ func (r *AuctionRunner) Run(ctx context.Context) {
 			log.Println("Auction runner shutting down")
 			return
 		}
-		// TODO: remove previous allocs each round
 	}
 }
 
@@ -83,10 +83,9 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 
 		key := any(entry.Key).(string)
 		value := any(entry.Value).(string)
-		keyParts := strings.Split(key, "|")
 		valueParts := strings.Split(value, "|")
 
-		ingressPort, err := strconv.ParseUint(keyParts[0], 10, 64)
+		ingressPort, err := strconv.ParseUint(key, 10, 64)
 		if err != nil {
 			log.Printf("Error parsing ingress port: %v", err)
 		}
@@ -119,22 +118,13 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 	// allocations, clearingPrice := algo.RunUniformPriceAuction(intervalID, capacity, bids)
 	allocations, clearingPrice := algo.RunReservationPriceAuction(intervalID, egressPort, capacity, bids, r.scenario.Parameters["reservation_price"])
 
-	for _, alloc := range allocations {
-		resp, err := r.client.SetUp(ctx, &proto.SetUpRequest{
-			ASideId:       alloc.IngressPort,
-			BSideId:       egressPort,
-			BandwidthKbps: alloc.AllocatedUnits, // TODO: map bandwidth (kbps)
-		})
+	for _, alloc := range allocations { // TODO: remove switch constant
+		err := r.WriteResults(ctx, "sw-1", alloc.IngressPort, alloc.EgressPort, alloc.AllocatedUnits)
 		if err != nil {
 			log.Printf("Error setting up: %v", err)
 			return
 		}
-		if resp.IsSuccess {
-			log.Printf("[Auction %d] %d allocated %d units", egressPort, alloc.IngressPort, alloc.AllocatedUnits)
-		} else {
-			log.Printf("[Auction %d] %d set up failed", egressPort, alloc.IngressPort)
-		}
-
+		log.Printf("Allocated %d units (%d->%d)", alloc.AllocatedUnits, alloc.IngressPort, alloc.EgressPort)
 	}
 
 	err = bidMap.Clear(ctx)
@@ -143,6 +133,32 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 	}
 
 	log.Printf("[Auction %d] Interval %s clearing price %d", egressPort, intervalID, clearingPrice)
+}
+
+type AuctionResultRecord struct {
+	IngressPort   uint64 `json:"ingress_port"`
+	EgressPort    uint64 `json:"egress_port"`
+	BandwidthKbps uint64 `json:"bandwidth_kbps"`
+}
+
+func (r *AuctionRunner) WriteResults(ctx context.Context, switchID string, ingressPort, egressPort, bandwidthKbps uint64) error {
+	results := AuctionResultRecord{
+		IngressPort:   ingressPort,
+		EgressPort:    egressPort,
+		BandwidthKbps: bandwidthKbps,
+	}
+	key := fmt.Sprintf("%s-results", switchID)
+	value, err := json.Marshal(results)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = r.writer.WriteMessages(ctx, kafka.Message{
+		Key:   []byte(key),
+		Value: value,
+	})
+
+	return err
 }
 
 func currentIntervalID(interval time.Duration) string {

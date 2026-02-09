@@ -38,3 +38,13 @@ helm repo update
 
 ### References
 - [Atomix](https://atomix.github.io)
+
+### Consuming Auction Results
+```bash
+kubectl exec -it ixp-kafka-dual-role-0 -- \
+bin/kafka-console-consumer.sh \
+--bootstrap-server localhost:9092 \
+--topic auction-results \       
+--from-beginning
+```
+This prints all the records since the beginning.

@@ -6,12 +6,12 @@ import (
 	"os"
 	"time"
 
-	pb "github.com/chew01/ixp-gcp/proto"
+	"github.com/chew01/ixp-gcp/auction/runner"
 	"github.com/chew01/ixp-gcp/shared/scenario"
-	"google.golang.org/grpc/credentials/insecure"
-
-	"google.golang.org/grpc"
+	"github.com/segmentio/kafka-go"
 )
+
+const AuctionResultTopic = "auction-results"
 
 func main() {
 	intervalSeconds := 30
@@ -21,9 +21,9 @@ func main() {
 		}
 	}
 
-	grpcServerAddr := os.Getenv("GRPC_SERVER_ADDR")
-	if grpcServerAddr == "" {
-		log.Fatal("GRPC_SERVER_ADDR env var not set")
+	kafkaBootstrap := os.Getenv("KAFKA_BOOTSTRAP")
+	if kafkaBootstrap == "" {
+		kafkaBootstrap = "ixp-kafka-kafka-bootstrap:9092"
 	}
 
 	scenarioPath := os.Getenv("SCENARIO_PATH")
@@ -36,15 +36,17 @@ func main() {
 		log.Fatal(err)
 	}
 
-	conn, err := grpc.NewClient(grpcServerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		log.Fatalf("Failed to create gRPC connection: %v", err)
+	writer := &kafka.Writer{
+		Addr:                   kafka.TCP(kafkaBootstrap),
+		Topic:                  AuctionResultTopic,
+		Balancer:               &kafka.LeastBytes{},
+		AllowAutoTopicCreation: true,
 	}
-	defer conn.Close()
+	defer writer.Close()
 
 	ctx := context.Background()
-	runner := NewAuctionRunner(ctx, pb.NewVirtualCircuitClient(conn), time.Duration(intervalSeconds)*time.Second, scene)
+	r := runner.New(writer, time.Duration(intervalSeconds)*time.Second, scene)
 
 	log.Println("Auction runner started")
-	runner.Run(ctx)
+	r.Run(ctx)
 }
