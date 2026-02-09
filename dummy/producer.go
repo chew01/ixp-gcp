@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/chew01/ixp-gcp/shared"
 	"github.com/chew01/ixp-gcp/shared/scenario"
 	"github.com/segmentio/kafka-go"
 )
@@ -15,20 +16,6 @@ type DummyProducer struct {
 	switchID string
 	kafka    *kafka.Writer
 	scenario *scenario.Scenario
-}
-
-type Flow struct {
-	IngressPort int    `json:"ingress_port"`
-	EgressPort  int    `json:"egress_port"`
-	Bytes       uint64 `json:"bytes"`
-}
-
-type Record struct {
-	SchemaVersion int    `json:"schema_version"`
-	SwitchID      string `json:"switch_id"`
-	WindowStartNS int64  `json:"window_start_ns"`
-	WindowEndNS   int64  `json:"window_end_ns"`
-	Flows         []Flow `json:"flows"`
 }
 
 func NewDummyProducer(writer *kafka.Writer, scenario *scenario.Scenario) *DummyProducer {
@@ -45,10 +32,10 @@ func (p *DummyProducer) Run(ctx context.Context) {
 		time.Sleep(ProduceWindowSec * time.Second)
 		windowEndNs := time.Now().UnixNano()
 
-		var flows []Flow
+		var flows []shared.Flow
 		for _, inPort := range p.scenario.Switches[0].IngressPorts {
 			for _, ePort := range p.scenario.Switches[0].EgressPorts {
-				f := Flow{
+				f := shared.Flow{
 					IngressPort: inPort,
 					EgressPort:  ePort,
 					Bytes:       uint64(RandRange(5e5, 2e6)),
@@ -57,8 +44,7 @@ func (p *DummyProducer) Run(ctx context.Context) {
 			}
 		}
 
-		r := Record{
-			SchemaVersion: 1,
+		r := shared.TelemetryRecord{
 			SwitchID:      p.scenario.Switches[0].ID,
 			WindowStartNS: windowStartNs,
 			WindowEndNS:   windowEndNs,

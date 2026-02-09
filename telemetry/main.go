@@ -9,23 +9,10 @@ import (
 
 	"github.com/atomix/go-sdk/pkg/atomix"
 	"github.com/atomix/go-sdk/pkg/generic"
+	"github.com/chew01/ixp-gcp/shared"
 	"github.com/chew01/ixp-gcp/shared/scenario"
 	"github.com/segmentio/kafka-go"
 )
-
-type FlowStat struct {
-	IngressPort int   `json:"ingress_port"`
-	EgressPort  int   `json:"egress_port"`
-	Bytes       int64 `json:"bytes"`
-}
-
-type WindowDigest struct {
-	SchemaVersion int        `json:"schema_version"`
-	SwitchID      string     `json:"switch_id"`
-	WindowStartNS int64      `json:"window_start_ns"`
-	WindowEndNS   int64      `json:"window_end_ns"`
-	Flows         []FlowStat `json:"flows"`
-}
 
 func main() {
 	kafkaBootstrap := os.Getenv("KAFKA_BOOTSTRAP")
@@ -70,23 +57,23 @@ func main() {
 			continue
 		}
 
-		var digest WindowDigest
-		if err := json.Unmarshal(msg.Value, &digest); err != nil {
+		var record shared.TelemetryRecord
+		if err := json.Unmarshal(msg.Value, &record); err != nil {
 			log.Println("Error parsing JSON:", err)
 			continue
 		}
 
-		durationSec := float64(digest.WindowEndNS-digest.WindowStartNS) / 1e9
+		durationSec := float64(record.WindowEndNS-record.WindowStartNS) / 1e9
 		if durationSec <= 0 {
 			continue
 		}
 
-		for _, flow := range digest.Flows {
+		for _, flow := range record.Flows {
 			throughputKbps := (float64(flow.Bytes*8) / 1e3) / durationSec
 
 			flowKey := fmt.Sprintf(
 				"%s|%d|%d",
-				digest.SwitchID,
+				record.SwitchID,
 				flow.IngressPort,
 				flow.EgressPort,
 			)
@@ -95,8 +82,8 @@ func main() {
 
 			log.Printf(
 				"[switch=%s window=%d] flow %d→%d: %.f Kbps",
-				digest.SwitchID,
-				digest.WindowStartNS,
+				record.SwitchID,
+				record.WindowStartNS,
 				flow.IngressPort,
 				flow.EgressPort,
 				throughputKbps,
