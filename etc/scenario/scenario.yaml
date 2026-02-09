@@ -2,6 +2,7 @@ version: v1
 name: 10i1e
 
 auction_result_kafka_topic: auction-results
+telemetry_kafka_topic: switch-telemetry
 
 parameters:
   reservation_price: 50

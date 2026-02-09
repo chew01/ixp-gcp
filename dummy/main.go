@@ -10,7 +10,6 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-const Topic = "switch-traffic-digests"
 const ProduceWindowSec = 1
 const BidWindowSec = 30
 
@@ -32,7 +31,7 @@ func main() {
 
 	writer := &kafka.Writer{
 		Addr:                   kafka.TCP(kafkaBootstrap),
-		Topic:                  Topic,
+		Topic:                  scene.TelemetryKafkaTopic,
 		Balancer:               &kafka.LeastBytes{},
 		AllowAutoTopicCreation: true,
 	}

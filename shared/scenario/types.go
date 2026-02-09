@@ -6,6 +6,7 @@ type Scenario struct {
 	Switches                []Switch       `yaml:"switches"`
 	Parameters              map[string]int `yaml:"parameters"`
 	AuctionResultKafkaTopic string         `yaml:"auction_result_kafka_topic"`
+	TelemetryKafkaTopic     string         `yaml:"telemetry_kafka_topic"`
 }
 
 type Switch struct {

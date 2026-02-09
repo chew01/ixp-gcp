@@ -9,6 +9,7 @@ import (
 
 	"github.com/atomix/go-sdk/pkg/atomix"
 	"github.com/atomix/go-sdk/pkg/generic"
+	"github.com/chew01/ixp-gcp/shared/scenario"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -29,20 +30,28 @@ type WindowDigest struct {
 func main() {
 	kafkaBootstrap := os.Getenv("KAFKA_BOOTSTRAP")
 	if kafkaBootstrap == "" {
-		log.Fatal("KAFKA_BOOTSTRAP env var not set")
+		kafkaBootstrap = "ixp-kafka-kafka-bootstrap:9092"
 	}
 
-	topic := "switch-traffic-digests"
+	scenarioPath := os.Getenv("SCENARIO_PATH")
+	if scenarioPath == "" {
+		scenarioPath = "/etc/scenario/scenario.yaml"
+	}
+
+	scene, err := scenario.Load(scenarioPath)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// TODO: make sure kube telemetry depends on kafka health
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{kafkaBootstrap},
-		Topic:   topic,
+		Topic:   scene.TelemetryKafkaTopic,
 		GroupID: "telemetry-service",
 	})
 	defer reader.Close()
 
-	log.Println("Telemetry service started, consuming from", topic)
+	log.Println("Telemetry service started, consuming from", scene.TelemetryKafkaTopic)
 	ctx := context.Background()
 
 	throughputMap, err := atomix.Map[string, string]("throughput-map").
