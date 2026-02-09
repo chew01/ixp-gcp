@@ -1,6 +1,8 @@
 version: v1
 name: 10i1e
 
+auction_result_kafka_topic: auction-results
+
 parameters:
   reservation_price: 50
   auction_interval: 30

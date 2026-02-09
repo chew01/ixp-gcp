@@ -11,8 +11,6 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-const AuctionResultTopic = "auction-results"
-
 func main() {
 	intervalSeconds := 30
 	if v := os.Getenv("AUCTION_INTERVAL_SECONDS"); v != "" {
@@ -38,7 +36,7 @@ func main() {
 
 	writer := &kafka.Writer{
 		Addr:                   kafka.TCP(kafkaBootstrap),
-		Topic:                  AuctionResultTopic,
+		Topic:                  scene.AuctionResultKafkaTopic,
 		Balancer:               &kafka.LeastBytes{},
 		AllowAutoTopicCreation: true,
 	}

@@ -4,7 +4,6 @@ go 1.25.4
 
 require (
 	github.com/atomix/go-sdk v0.10.0
-	github.com/chew01/ixp-gcp/proto v0.0.0-20260206131727-e101678705bc
 	github.com/chew01/ixp-gcp/shared v0.0.0
 	github.com/segmentio/kafka-go v0.4.50
 )

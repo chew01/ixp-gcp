@@ -1,10 +1,11 @@
 package scenario
 
 type Scenario struct {
-	Version    string         `yaml:"version"`
-	Name       string         `yaml:"name"`
-	Switches   []Switch       `yaml:"switches"`
-	Parameters map[string]int `yaml:"parameters"`
+	Version                 string         `yaml:"version"`
+	Name                    string         `yaml:"name"`
+	Switches                []Switch       `yaml:"switches"`
+	Parameters              map[string]int `yaml:"parameters"`
+	AuctionResultKafkaTopic string         `yaml:"auction_result_kafka_topic"`
 }
 
 type Switch struct {
