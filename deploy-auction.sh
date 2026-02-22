@@ -1,7 +1,7 @@
 # API Gateway
 cd auction && go mod vendor && cd ..
 echo "Building Auction runner docker image..."
-docker build -t auction-runner:local ./auction
+docker build -f auction/Dockerfile -t auction-runner:local .
 echo "Docker image built."
 echo "Loading Auction runner image into minikube..."
 minikube image load auction-runner:local

@@ -1,6 +1,6 @@
 cd dummy && go mod vendor && cd ..
 echo "Building Dummy docker image..."
-docker build -t dummy-producer:local ./dummy
+docker build -f dummy/Dockerfile -t dummy-producer:local .
 echo "Docker image built."
 echo "Loading Dummy image into minikube..."
 minikube image load dummy-producer:local

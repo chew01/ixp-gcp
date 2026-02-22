@@ -1,6 +1,6 @@
 # API Gateway
 echo "Building API Gateway docker image..."
-docker build -t api-gateway:local ./api
+docker build -f api/Dockerfile -t api-gateway:local .
 echo "Docker image built."
 echo "Loading API Gateway image into minikube..."
 minikube image load api-gateway:local

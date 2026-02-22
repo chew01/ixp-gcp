@@ -19,6 +19,11 @@ spec:
       containers:
       - name: api-gateway
         image: api-gateway:local
+        env:
+          - name: OTEL_SERVICE_NAME
+            value: api-gateway
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: "otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:4317"
         ports:
         - containerPort: 8080
 ---

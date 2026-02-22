@@ -23,10 +23,14 @@ spec:
           - name: KAFKA_BOOTSTRAP
             value: "ixp-kafka-kafka-bootstrap:9092"
           - name: SCENARIO_PATH
-            value: /etc/scenario/scenario.yaml
+            value: "/etc/scenario/scenario.yaml"
+          - name: OTEL_SERVICE_NAME
+            value: auction-runner
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: "otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:4317"
         volumeMounts:
           - name: scenario-volume
-            mountPath: /etc/scenario
+            mountPath: "/etc/scenario"
             readOnly: true
 
       volumes:

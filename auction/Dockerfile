@@ -8,12 +8,12 @@ RUN apk add --no-cache git bash
 WORKDIR /app
 
 # Copy go.mod and go.sum first for caching
-COPY go.mod go.sum ./
+COPY auction/go.mod auction/go.sum ./
+COPY shared ./shared
+COPY auction/vendor ./vendor
 
-COPY vendor ./vendor
-
-# Copy the source code
-COPY . .
+# Copy the auction source code
+COPY auction/ .
 
 # Build the Go binary (static)
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o auction-runner

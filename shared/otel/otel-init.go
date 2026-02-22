@@ -12,6 +12,13 @@ import (
 
 var serviceName = os.Getenv("OTEL_SERVICE_NAME")
 
+// Helper to inject context into a map-like carrier
+type StringMapCarrier map[string]string
+
+func (c StringMapCarrier) Set(key, value string) { c[key] = value }
+func (c StringMapCarrier) Get(key string) string { return c[key] }
+func (c StringMapCarrier) Keys() []string        { /* not needed for inject */ return nil }
+
 // Package-level OTel instruments for use across all files
 var (
 	Logger *slog.Logger

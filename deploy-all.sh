@@ -6,6 +6,7 @@ bash deploy-dummy.sh
 bash deploy-telemetry.sh
 bash deploy-api.sh
 bash deploy-auction.sh
+bash deploy-observability.sh
 # bash deploy-monitoring.sh
 
 minikube tunnel

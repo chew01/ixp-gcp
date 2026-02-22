@@ -1,5 +1,5 @@
 echo "Building Telemetry docker image..."
-docker build -t telemetry-service:local ./telemetry
+docker build -f telemetry/Dockerfile -t telemetry-service:local .
 echo "Docker image built."
 echo "Loading Telemetry image into minikube..."
 minikube image load telemetry-service:local

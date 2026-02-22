@@ -8,12 +8,13 @@ RUN apk add --no-cache git bash
 WORKDIR /app
 
 # Copy go.mod and go.sum first for caching
-COPY go.mod go.sum ./
+COPY dummy/go.mod dummy/go.sum ./
+COPY shared ./shared
 
-COPY vendor ./vendor
+COPY dummy/vendor ./vendor
 
 # Copy the source code
-COPY . .
+COPY dummy/ .
 
 # Build the Go binary (static)
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o dummy-producer
