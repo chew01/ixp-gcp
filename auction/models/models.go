@@ -1,7 +1,7 @@
 package models
 
-// AuctionBid represents a user bid (from Atomix)
-type AuctionBid struct {
+// Bid represents a user bid (from Atomix)
+type Bid struct {
 	IngressPort uint64 `json:"ingress_port"`
 	EgressPort  uint64 `json:"egress_port"` // maps to auction
 	Units       uint64 `json:"units"`       // bandwidth units (kbps)

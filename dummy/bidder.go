@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/chew01/ixp-gcp/shared"
 	"github.com/chew01/ixp-gcp/shared/scenario"
 )
 
@@ -17,13 +18,6 @@ type DummyBidder struct {
 	url      string
 	http     *http.Client
 	scenario *scenario.Scenario
-}
-
-type Bid struct {
-	IngressPort *uint64 `json:"ingress_port"`
-	EgressPort  *uint64 `json:"egress_port"` // maps to auction
-	Units       *uint64 `json:"units"`       // bandwidth units (kbps)
-	UnitPrice   *int    `json:"unit_price"`  // price per unit
 }
 
 func NewDummyBidder(url string, scenario *scenario.Scenario) *DummyBidder {
@@ -48,7 +42,7 @@ func (b *DummyBidder) Run(ctx context.Context) {
 				units := uint64(RandRange(0, 100))
 				unitPrice := RandRange(1, 100)
 
-				bid := &Bid{
+				bid := &shared.BidRequest{
 					IngressPort: &ingressPort,
 					EgressPort:  &egressPort,
 					Units:       &units,
@@ -68,7 +62,7 @@ func (b *DummyBidder) Run(ctx context.Context) {
 	}
 }
 
-func (b *DummyBidder) SubmitBid(ctx context.Context, bid *Bid) error {
+func (b *DummyBidder) SubmitBid(ctx context.Context, bid *shared.BidRequest) error {
 	body, err := json.Marshal(bid)
 	if err != nil {
 		return fmt.Errorf("failed to marshal bid: %v", err)

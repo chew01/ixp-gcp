@@ -2,7 +2,10 @@ module github.com/chew01/ixp-gcp/api
 
 go 1.25.4
 
-require github.com/atomix/go-sdk v0.10.0
+require (
+	github.com/atomix/go-sdk v0.10.0
+	github.com/chew01/ixp-gcp/shared v0.0.0
+)
 
 require (
 	github.com/atomix/runtime/api v0.7.0 // indirect
@@ -22,3 +25,5 @@ require (
 	google.golang.org/protobuf v1.28.0 // indirect
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b // indirect
 )
+
+replace github.com/chew01/ixp-gcp/shared => ../shared

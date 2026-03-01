@@ -6,16 +6,16 @@ WORKDIR /app
 # Install CA certs (needed later if Atomix / HTTPS)
 RUN apk add --no-cache ca-certificates
 
-# Copy go mod files first (better caching)
+# Copy go.mod and go.sum first for caching
 COPY go.mod go.sum ./
-RUN go mod download
+
+COPY vendor ./vendor
 
 # Copy source
 COPY . .
 
 # Build static binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -o api-gateway
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o api-gateway
 
 # -------- Runtime stage --------
 FROM gcr.io/distroless/base-debian12

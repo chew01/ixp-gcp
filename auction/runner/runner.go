@@ -57,7 +57,7 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 
 	log.Printf("[Auction %d] Interval %s running", egressPort, intervalID)
 
-	var bids []models.AuctionBid
+	var bids []models.Bid
 
 	mapID := fmt.Sprintf("bids-%d", egressPort)
 	bidMap, err := atomix.Map[string, string](mapID).
@@ -101,7 +101,7 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 			continue
 		}
 
-		bids = append(bids, models.AuctionBid{
+		bids = append(bids, models.Bid{
 			IngressPort: ingressPort,
 			EgressPort:  egressPort,
 			Units:       units,
@@ -119,7 +119,7 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 	// allocations, clearingPrice := algo.RunUniformPriceAuction(intervalID, capacity, bids)
 	allocations, clearingPrice := algo.RunReservationPriceAuction(intervalID, egressPort, capacity, bids, r.scenario.ReservationPrice)
 
-	for _, alloc := range allocations { // TODO: remove switch constant
+	for _, alloc := range allocations {
 		err := r.WriteResults(ctx, "sw-1", alloc.IngressPort, alloc.EgressPort, alloc.AllocatedUnits)
 		if err != nil {
 			log.Printf("Error setting up: %v", err)

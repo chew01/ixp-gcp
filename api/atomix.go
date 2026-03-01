@@ -7,6 +7,7 @@ import (
 
 	"github.com/atomix/go-sdk/pkg/atomix"
 	"github.com/atomix/go-sdk/pkg/generic"
+	"github.com/chew01/ixp-gcp/shared"
 )
 
 type AtomixFlowStore struct{}
@@ -29,7 +30,7 @@ func (s *AtomixFlowStore) Get(ctx context.Context, flowKey string) (string, erro
 
 type AtomixBidStore struct{}
 
-func (s *AtomixBidStore) Put(ctx context.Context, bid Bid) error {
+func (s *AtomixBidStore) Put(ctx context.Context, bid shared.BidRequest) error {
 	mapID := fmt.Sprintf("bids-%d", *bid.EgressPort)
 	bidMap, err := atomix.Map[string, string](mapID).
 		Codec(generic.Scalar[string]()).

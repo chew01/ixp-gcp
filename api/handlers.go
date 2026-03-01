@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/chew01/ixp-gcp/shared"
 )
 
 type Server struct {
@@ -94,7 +96,7 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var bid Bid
+	var bid shared.BidRequest
 	if err := json.NewDecoder(r.Body).Decode(&bid); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return

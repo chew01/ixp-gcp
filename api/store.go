@@ -1,6 +1,10 @@
 package main
 
-import "context"
+import (
+	"context"
+
+	"github.com/chew01/ixp-gcp/shared"
+)
 
 type FlowStore interface {
 	// Key: sw-1|1|5
@@ -8,5 +12,5 @@ type FlowStore interface {
 }
 
 type BidStore interface {
-	Put(ctx context.Context, bid Bid) error
+	Put(ctx context.Context, bid shared.BidRequest) error
 }
