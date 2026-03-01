@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"time"
 
@@ -31,43 +30,41 @@ func (p *DummyProducer) Run(ctx context.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	for {
-		windowStartNs := time.Now().UnixNano()
-		time.Sleep(interval)
-		windowEndNs := time.Now().UnixNano()
 
-		var flows []shared.Flow
+	for {
+		time.Sleep(interval)
+		var messages []kafka.Message
+
 		for _, inPort := range p.scenario.Switches[0].IngressPorts {
 			for _, ePort := range p.scenario.Switches[0].EgressPorts {
-				f := shared.Flow{
-					IngressPort: inPort,
-					EgressPort:  ePort,
-					Bytes:       uint64(RandRange(5e5, 2e6)),
+				rx := uint64(RandRange(1000, 100000))
+				t := shared.TelemetryRecord{
+					FlowID: shared.Flow{
+						IngressPort:  inPort,
+						EgressPort:   ePort,
+						SourceVLANID: 10,
+						DestVLANID:   20,
+					},
+					RxByteCount: rx,
+					TxByteCount: rx,
 				}
-				flows = append(flows, f)
+
+				value, err := json.Marshal(t)
+				if err != nil {
+					log.Fatal(err)
+				}
+
+				messages = append(messages, kafka.Message{
+					Key:   []byte(p.switchID),
+					Value: value,
+				})
 			}
 		}
 
-		r := shared.TelemetryRecord{
-			SwitchID:      p.scenario.Switches[0].ID,
-			WindowStartNS: windowStartNs,
-			WindowEndNS:   windowEndNs,
-			Flows:         flows,
+		if err := p.kafka.WriteMessages(ctx, messages...); err != nil {
+			log.Printf("Failed to write %d messages to Kafka: %v", len(messages), err)
+		} else {
+			log.Printf("Produced %d records", len(messages))
 		}
-
-		key := fmt.Sprintf("%s|%d", p.scenario.Switches[0].ID, windowStartNs)
-		value, err := json.Marshal(r)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		err = p.kafka.WriteMessages(ctx, kafka.Message{
-			Key:   []byte(key),
-			Value: value,
-		})
-		if err != nil {
-			log.Printf("Failed to write message to Kafka: %v", err)
-		}
-		log.Printf("Produced %d flows", len(flows))
 	}
 }
