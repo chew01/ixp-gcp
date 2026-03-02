@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 
 	"github.com/atomix/go-sdk/pkg/atomix"
@@ -48,7 +50,14 @@ func (s *AtomixFlowStore) List(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to list flows: %w", err)
 	}
-	for _, entry := range entries {
+	for {
+		entry, err := entries.Next()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, fmt.Errorf("failed to iterate flows: %w", err)
+		}
 		keys = append(keys, entry.Key)
 	}
 	return keys, nil

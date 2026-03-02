@@ -1,14 +1,22 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 )
 
 func main() {
+	ctx := context.Background()
+	fs, err := NewAtomixFlowStore(ctx)
+	if err != nil {
+		log.Fatalf("failed to create flow store: %v", err)
+	}
+	bs := NewAtomixBidStore()
+
 	server := &Server{
-		fs: &AtomixFlowStore{},
-		bs: &AtomixBidStore{},
+		fs: fs,
+		bs: bs,
 	}
 
 	appMux := http.NewServeMux()

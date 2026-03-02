@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/chew01/ixp-gcp/shared"
 	"github.com/prometheus/client_golang/prometheus"
@@ -109,6 +110,7 @@ func (s *Server) refreshMetrics(ctx context.Context) {
 	for _, flowKey := range keys {
 		switchID, ingress, egress, err := parseFlowKey(flowKey)
 		if err != nil {
+			log.Printf("failed to parse flow key: %v", err)
 			continue
 		}
 
@@ -162,13 +164,22 @@ func buildFlowKey(switchID string, ingress, egress int) string {
 }
 
 func parseFlowKey(key string) (string, int, int, error) {
-	var switchID string
-	var ingress, egress int
-	_, err := fmt.Sscanf(key, "%s|%d|%d", &switchID, &ingress, &egress)
-	if err != nil {
+	parts := strings.Split(key, "|")
+	if len(parts) != 3 {
 		return "", 0, 0, fmt.Errorf("invalid flow key format: %s", key)
 	}
-	return switchID, ingress, egress, nil
+
+	ingress, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("invalid ingress port in flow key: %s", key)
+	}
+
+	egress, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("invalid egress port in flow key: %s", key)
+	}
+
+	return parts[0], ingress, egress, nil
 }
 
 func validateBid(bid shared.BidRequest) error {

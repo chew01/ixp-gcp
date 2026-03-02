@@ -52,6 +52,11 @@ deploy-monitoring:
 	helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
 		--namespace monitoring --create-namespace \
 		-f monitoring/values.yaml
+	kubectl create configmap ixp-flows-dashboard \
+		--from-file=ixp-flows.json=./monitoring/ixp-flows.json \
+		-n monitoring -o yaml --dry-run=client | kubectl apply -f -
+	kubectl label configmap ixp-flows-dashboard \
+		-n monitoring grafana_dashboard="1" --overwrite
 
 
 deploy-telemetry:
@@ -65,7 +70,7 @@ deploy-telemetry:
 # ============================================================
 .PHONY: infra services all
 
-infra: deploy-minikube deploy-kafka deploy-atomix deploy-config
+infra: deploy-minikube deploy-kafka deploy-atomix deploy-config deploy-monitoring
 
 services: vendor deploy-api deploy-auction deploy-dummy deploy-telemetry
 
