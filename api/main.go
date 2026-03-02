@@ -11,15 +11,19 @@ func main() {
 		bs: &AtomixBidStore{},
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/flows", server.getFlows)
-	mux.HandleFunc("/bids", server.postBid)
-	mux.HandleFunc("/metrics", server.getMetrics)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	})
+	appMux := http.NewServeMux()
+	appMux.HandleFunc("/flows", server.getFlows)
+	appMux.HandleFunc("/bids", server.postBid)
+	appMux.HandleFunc("/metrics", server.getMetrics)
 
-	log.Println("HTTP telemetry API listening on :8080")
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	metricsMux := http.NewServeMux()
+	metricsMux.HandleFunc("/metrics", server.getMetrics)
+
+	go func() {
+		log.Println("Metrics server listening on :9090")
+		log.Fatal(http.ListenAndServe(":9090", metricsMux))
+	}()
+
+	log.Println("API Gateway listening on :8080")
+	log.Fatal(http.ListenAndServe(":8080", appMux))
 }

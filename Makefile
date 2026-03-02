@@ -12,6 +12,7 @@ deploy-api:
 	minikube image load api-gateway:local
 	kubectl apply -f ./api/ingress.yaml
 	kubectl apply -f ./api/deployment.yaml
+	kubectl apply -f ./api/service-monitor.yaml
 
 deploy-atomix:
 	@echo "==> Deploying Atomix..."
@@ -47,6 +48,12 @@ deploy-minikube:
 	minikube start
 	minikube addons enable ingress
 
+deploy-monitoring:
+	helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+		--namespace monitoring --create-namespace \
+		-f monitoring/values.yaml
+
+
 deploy-telemetry:
 	@echo "==> Deploying Telemetry Processor..."
 	docker build -t telemetry-service:local ./telemetry
@@ -67,7 +74,7 @@ all: infra services
 # ============================================================
 # Utilities
 # ============================================================
-.PHONY: vendor logs
+.PHONY: vendor logs setup
 
 vendor:
 	@for mod in $(VENDOR_MODULES); do \
@@ -77,3 +84,14 @@ vendor:
 
 logs:
 	kubectl logs -l app=$(SERVICE) -f --namespace $(NAMESPACE)
+
+setup:
+	helm repo add atomix https://atomix.github.io/charts.atomix.io
+	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+	helm repo update
+
+grafana-ui:
+	kubectl port-forward svc/monitoring-grafana 3000:80 -n monitoring &
+	@echo "Grafana at http://localhost:3000"
+	@echo "Password: $$(kubectl get secret monitoring-grafana -n monitoring \
+		-o jsonpath='{.data.admin-password}' | base64 --decode)"

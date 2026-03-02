@@ -10,11 +10,7 @@
 - Install Helm charts for Atomix, Prometheus, Grafana
 
 ```bash
-# Helm repos
-helm repo add atomix https://atomix.github.io/charts.atomix.io
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo add grafana https://grafana.github.io/helm-charts
-helm repo update
+make setup
 ```
 
 ### Design

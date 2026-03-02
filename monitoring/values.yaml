@@ -1,0 +1,6 @@
+grafana:
+  adminPassword: "changeme"
+
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false  # scrape ALL ServiceMonitors in cluster
