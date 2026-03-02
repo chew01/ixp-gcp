@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"time"
 
 	"github.com/atomix/go-sdk/pkg/atomix"
@@ -162,8 +163,6 @@ func (c *Consumer) publishMetrics(ctx context.Context, m FlowMetrics) {
 	// TODO: forward to TSDB
 }
 
-// Pure functions — easy to unit test
-
 func buildFlowKey(switchID string, flow shared.Flow) string {
 	return fmt.Sprintf("%s|%d|%d",
 		switchID,
@@ -178,17 +177,41 @@ func computeMetrics(switchID, flowKey string, record shared.TelemetryRecord, pre
 		return FlowMetrics{}, false
 	}
 
+	rxDelta := delta(record.RxByteCount, prev.LastRxBytes)
+	txDelta := delta(record.TxByteCount, prev.LastTxBytes)
+
+	var dropDelta uint64
+	if rxDelta > txDelta {
+		dropDelta = rxDelta - txDelta
+	}
+
+	rxBits := float64(rxDelta) * 8
+	txBits := float64(txDelta) * 8
+	dropBits := float64(dropDelta) * 8
+
+	ingressBps := rxBits / dt
+	egressBps := txBits / dt
+	dropBps := dropBits / dt
+
 	var dropRate float64
-	if record.RxByteCount > 0 {
-		dropRate = float64(record.RxByteCount-record.TxByteCount) / float64(record.RxByteCount) * 100
+	if rxDelta > 0 {
+		dropRate = float64(dropDelta) / float64(rxDelta) * 100
 	}
 
 	return FlowMetrics{
 		SwitchID:    switchID,
 		FlowKey:     flowKey,
-		IngressKbps: (float64(record.RxByteCount) * 8 / 1e3) / dt,
-		EgressKbps:  (float64(record.TxByteCount) * 8 / 1e3) / dt,
-		DropKbps:    (float64(record.RxByteCount-record.TxByteCount) * 8 / 1e3) / dt,
+		IngressKbps: ingressBps / 1e3,
+		EgressKbps:  egressBps / 1e3,
+		DropKbps:    dropBps / 1e3,
 		DropRate:    dropRate,
 	}, true
+}
+
+func delta(curr, prev uint64) uint64 {
+	if curr >= prev {
+		return curr - prev
+	}
+	// ASSUMPTION - does not wrap more than once
+	return (math.MaxUint64 - prev) + curr + 1
 }
