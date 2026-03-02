@@ -1,14 +1,6 @@
 # ixp-gcp
 
-### Telemetry Log Format
-
-- Key: switch id
-- Value: see [shared/structs.go]()
-
-### Requirements
-- Install Helm
-- Install Helm charts for Atomix, Prometheus, Grafana
-
+## Deploymne
 ```bash
 make setup
 ```
@@ -29,3 +21,8 @@ bin/kafka-console-consumer.sh \
 --from-beginning
 ```
 This prints all the records since the beginning.
+
+### Telemetry Log Format
+
+- Key: switch id
+- Value: see [shared/structs.go]()
