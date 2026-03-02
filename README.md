@@ -1,13 +1,25 @@
 # ixp-gcp
 
-## Deploymne
+### Prerequisites
+- Go 1.25+
+- Docker
+- Kubectl
+- Working Kubernetes cluster
+- Helm
+
+### Setup
 ```bash
 make setup
 ```
+This will register necessary helm repos.
 
-### Design
-- Throughput for bids is in kbps
-- Throughput for telemetry entries is coerced to nearest kbps
+### Quick Start
+```bash
+make all
+make grafana-ui
+```
+This will set up all necessary infra and services.
+
 
 ### References
 - [Atomix](https://atomix.github.io)
