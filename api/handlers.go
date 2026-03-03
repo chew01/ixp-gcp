@@ -161,6 +161,10 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	span.SetAttributes(attribute.Int("bid.ingress_port", int(*bid.IngressPort)))
+	span.SetAttributes(attribute.Int("bid.egress_port", int(*bid.EgressPort)))
+	span.SetAttributes(attribute.Int("bid.units", int(*bid.Units)))
+	span.SetAttributes(attribute.Int("bid.unit_price", int(*bid.UnitPrice)))
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("bid accepted"))
 }

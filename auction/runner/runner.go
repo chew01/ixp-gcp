@@ -81,6 +81,8 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 		"intervalID", intervalID,
 	)
 
+	// Create a map to hold the spans for each ingress port
+	bidSpans := make(map[uint64]trace.Span)
 	var bids []models.AuctionBid
 
 	mapID := fmt.Sprintf("bids-%d", egressPort)
@@ -124,7 +126,7 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 		// var temp_ctx context.Context
 		if len(valueParts) > 2 {
 			carrier := localotel.StringMapCarrier{"traceparent": valueParts[2]}
-			extractedCtx := otel.GetTextMapPropagator().Extract(context.Background(), carrier)
+			extractedCtx := otel.GetTextMapPropagator().Extract(auctionCtx, carrier)
 			remoteSpanCtx := trace.SpanContextFromContext(extractedCtx)
 
 			if remoteSpanCtx.IsValid() {
@@ -138,6 +140,8 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 			bidCtx, bidSpan := localotel.Tracer.Start(auctionCtx, "process-individual-bid", trace.WithLinks(links...))
 
 			ingressPort, err := strconv.ParseUint(key, 10, 64)
+			// Save the span to update later
+			bidSpans[ingressPort] = bidSpan
 			if err != nil {
 				bidSpan.SetStatus(codes.Error, "error parsing ingress port")
 				bidSpan.RecordError(err)
@@ -168,7 +172,6 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 				UnitPrice:   unitPrice,
 			})
 			slog.DebugContext(bidCtx, "Bid parsed and linked", "ingress", ingressPort)
-			bidSpan.End()
 		}
 
 	}
@@ -190,6 +193,30 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 	allocations, clearingPrice := algo.RunReservationPriceAuction(intervalID, egressPort, capacity, bids, r.scenario.ReservationPrice)
 	algoSpan.SetAttributes(attribute.Int("clearing_price", clearingPrice))
 	algoSpan.End()
+
+	for _, span := range bidSpans {
+		span.SetAttributes(attribute.Bool("auction.is_allocated", false))
+		span.SetAttributes(attribute.Int("auction.clearing_price", clearingPrice))
+	}
+
+	// Update the auction result for each bid span
+	for _, alloc := range allocations {
+		if span, ok := bidSpans[alloc.IngressPort]; ok {
+			span.SetAttributes(
+				attribute.Bool("auction.is_allocated", true),
+				attribute.Int64("auction.allocated_units", int64(alloc.AllocatedUnits)),
+				attribute.Int64("auction.ingress_port", int64(alloc.IngressPort)),
+				attribute.Int64("auction.egress_port", int64(alloc.EgressPort)),
+				attribute.Int64("auction.clearing_price", int64(alloc.ClearingPrice)),
+				attribute.String("auction.interval", alloc.Interval),
+			)
+		}
+	}
+
+	// End all bid spans
+	for _, span := range bidSpans {
+		span.End()
+	}
 
 	for _, alloc := range allocations { // TODO: remove switch constant
 		err := r.WriteResults(auctionCtx, "sw-1", alloc.IngressPort, alloc.EgressPort, alloc.AllocatedUnits)
@@ -225,11 +252,17 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 
 func (r *AuctionRunner) WriteResults(ctx context.Context, switchID string, ingressPort, egressPort, bandwidthKbps uint64) error {
 	ctx, span := localotel.Tracer.Start(ctx, "kafka-produce-result")
+	defer span.End()
 	results := shared.AuctionResultRecord{
 		IngressPort:   ingressPort,
 		EgressPort:    egressPort,
 		BandwidthKbps: bandwidthKbps,
 	}
+	span.SetAttributes(
+		attribute.Int64("auction.ingress_port", int64(ingressPort)),
+		attribute.Int64("auction.egress_port", int64(egressPort)),
+		attribute.Int64("auction.bandwidthkpbs", int64(bandwidthKbps)),
+	)
 	key := fmt.Sprintf("%s-results", switchID)
 	value, err := json.Marshal(results)
 	if err != nil {

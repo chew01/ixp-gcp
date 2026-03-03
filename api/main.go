@@ -89,6 +89,6 @@ func newHTTPHandler() http.Handler {
 	})
 
 	// Add HTTP instrumentation for the whole server.
-	handler := otelhttp.NewHandler(mux, "/")
+	handler := otelhttp.NewHandler(mux, "http-api-gateway")
 	return handler
 }

@@ -18,18 +18,20 @@ helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
   -f helm/opentelemetry-collector/values.yaml \
   --wait
 
-echo "Installing Prometheus..."
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo update
-helm upgrade --install prometheus prometheus-community/prometheus \
-  --namespace monitoring \
-  --set server.persistentVolume.enabled=false \
-  --set alertmanager.enabled=false \
-  --set pushgateway.enabled=false \
-  --set server.extraFlags="{web.enable-otlp-receiver}" \
-  --wait
+# echo "Installing Prometheus..."
+# helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+# helm repo update
+# helm upgrade --install prometheus prometheus-community/prometheus \
+#   --namespace monitoring \
+#   --set server.persistentVolume.enabled=false \
+#   --set alertmanager.enabled=false \
+#   --set pushgateway.enabled=false \
+#   --set server.extraFlags="{web.enable-otlp-receiver}" \
+#   --wait
 
 echo "Installing Grafana with automated data sources..."
+helm repo add grafana https://grafana.github.io/helm-charts || true
+helm repo update
 helm upgrade --install grafana grafana/grafana \
   --namespace monitoring \
   --set persistence.enabled=false \
@@ -81,14 +83,16 @@ helm upgrade --install jaeger jaegertracing/jaeger \
 echo "Installing Loki for log aggregation..."
 helm upgrade --install loki grafana/loki \
   --namespace monitoring \
-  -f helm/loki/values.yaml
+  -f helm/loki/values.yaml \
   --wait
 
 
 echo "Setting up port forwarding..."
+echo "Setup jaegar port forwarding"
+kubectl port-forward -n monitoring svc/jaeger 16686:16686
 echo "Grafana: kubectl port-forward -n monitoring svc/grafana 3000:80"
-# kubectl port-forward -n monitoring svc/grafana 3000:80
-echo "Prometheus: kubectl port-forward -n monitoring svc/prometheus-server 9090:80"
+kubectl port-forward -n monitoring svc/grafana 3000:80
+# echo "Prometheus: kubectl port-forward -n monitoring svc/prometheus-server 9090:80"
 # kubectl port-forward -n monitoring svc/prometheus-server 9090:80
 echo "Jaeger: kubectl port-forward -n monitoring svc/jaeger 16686:16686"
 echo "Loki: kubectl port-forward -n monitoring svc/loki 3100:3100"

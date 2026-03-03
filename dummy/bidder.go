@@ -13,6 +13,7 @@ import (
 
 	localotel "github.com/chew01/ixp-gcp/shared/otel"
 	"github.com/chew01/ixp-gcp/shared/scenario"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -36,8 +37,11 @@ type Bid struct {
 
 func NewDummyBidder(url string, scenario *scenario.Scenario) *DummyBidder {
 	return &DummyBidder{
-		url:      url,
-		http:     &http.Client{},
+		url: url,
+		// Wrap the transport so it tracks the HTTP "hop"
+		http: &http.Client{
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
+		},
 		scenario: scenario,
 	}
 }
@@ -172,6 +176,13 @@ func (b *DummyBidder) Run(ctx context.Context) {
 func (b *DummyBidder) SubmitBid(ctx context.Context, bid *Bid, method string) error {
 	reqCtx, span := localotel.Tracer.Start(ctx, "submit-bid")
 	defer span.End()
+
+	span.SetAttributes(
+		attribute.Int64("bid.ingress_port", int64(*bid.IngressPort)),
+		attribute.Int64("bid.egress_port", int64(*bid.EgressPort)),
+		attribute.Int64("bid.units", int64(*bid.Units)),
+		attribute.Int64("bid.unit_price", int64(*bid.UnitPrice)),
+	)
 
 	body, err := json.Marshal(bid)
 	if err != nil {

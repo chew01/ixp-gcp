@@ -37,6 +37,14 @@ type AtomixBidStore struct{}
 func (s *AtomixBidStore) Put(ctx context.Context, bid Bid) error {
 	ctx, span := localotel.Tracer.Start(ctx, "bid-storing")
 	defer span.End()
+
+	span.SetAttributes(
+		attribute.Int64("bid.ingress_port", int64(*bid.IngressPort)),
+		attribute.Int64("bid.egress_port", int64(*bid.EgressPort)),
+		attribute.Int64("bid.units", int64(*bid.Units)),
+		attribute.Int64("bid.unit_price", int64(*bid.UnitPrice)),
+	)
+
 	mapID := fmt.Sprintf("bids-%d", *bid.EgressPort)
 	bidMap, err := atomix.Map[string, string](mapID).
 		Codec(generic.Scalar[string]()).
