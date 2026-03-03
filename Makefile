@@ -103,3 +103,6 @@ grafana-ui:
 
 stop:
 	minikube delete
+
+proto:
+	cd shared/proto && mkdir -p pb && protoc -I . --go_out=pb --go_opt=paths=source_relative *.proto
