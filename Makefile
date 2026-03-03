@@ -79,7 +79,7 @@ all: infra services
 # ============================================================
 # Utilities
 # ============================================================
-.PHONY: vendor logs setup
+.PHONY: vendor logs setup grafana-ui stop
 
 vendor:
 	@for mod in $(VENDOR_MODULES); do \
@@ -100,3 +100,6 @@ grafana-ui:
 	@echo "Grafana at http://localhost:3000"
 	@echo "Password: $$(kubectl get secret monitoring-grafana -n monitoring \
 		-o jsonpath='{.data.admin-password}' | base64 --decode)"
+
+stop:
+	minikube delete
