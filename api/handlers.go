@@ -94,7 +94,7 @@ func (s *Server) getMetrics(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
-	ctx, span := otel.Tracer.Start(r.Context(), "bid-validation")
+	ctx, span := otel.Tracer.Start(r.Context(), "bid-received")
 	defer span.End()
 	if r.Method != http.MethodPost {
 		span.SetStatus(codes.Error, "method not allowed")

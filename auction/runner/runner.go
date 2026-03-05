@@ -127,6 +127,7 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 		if len(valueParts) > 2 {
 			carrier := localotel.StringMapCarrier{"traceparent": valueParts[2]}
 			extractedCtx := otel.GetTextMapPropagator().Extract(auctionCtx, carrier)
+			// Grab the SpanContext (the ID data) out of that extracted context
 			remoteSpanCtx := trace.SpanContextFromContext(extractedCtx)
 
 			if remoteSpanCtx.IsValid() {
@@ -182,6 +183,9 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 	}
 
 	msg = fmt.Sprintf("[Auction %d] %d bids for %d units", egressPort, len(bids), capacity)
+	auctionSpan.SetAttributes(
+		attribute.Int64("auction.number_of_bids", int64(len(bids))),
+	)
 	slog.DebugContext(auctionCtx, msg,
 		"egressPort", egressPort,
 		"bid_len", len(bids),
