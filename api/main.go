@@ -4,10 +4,23 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
+
+	"github.com/chew01/ixp-gcp/shared/scenario"
 )
 
 func main() {
 	ctx := context.Background()
+
+	scenarioPath := os.Getenv("SCENARIO_PATH")
+	if scenarioPath == "" {
+		scenarioPath = "/etc/scenario/scenario.yaml"
+	}
+	scen, err := scenario.Load(scenarioPath)
+	if err != nil {
+		log.Fatalf("failed to load scenario: %v", err)
+	}
+
 	fs, err := NewAtomixFlowStore(ctx)
 	if err != nil {
 		log.Fatalf("failed to create flow store: %v", err)
@@ -15,8 +28,9 @@ func main() {
 	bs := NewAtomixBidStore()
 
 	server := &Server{
-		fs: fs,
-		bs: bs,
+		fs:       fs,
+		bs:       bs,
+		scenario: scen,
 	}
 
 	appMux := http.NewServeMux()

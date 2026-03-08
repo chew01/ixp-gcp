@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/chew01/ixp-gcp/shared"
+	"github.com/chew01/ixp-gcp/shared/scenario"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -42,8 +43,9 @@ func init() {
 }
 
 type Server struct {
-	fs FlowStore
-	bs BidStore
+	fs       FlowStore
+	bs       BidStore
+	scenario *scenario.Scenario
 }
 
 // parseFlowMetricsValue parses the stored string into FlowMetricsValue.
@@ -97,10 +99,28 @@ func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]shared.FlowMetricsValue{flowKey: metrics})
 }
 
-// POST /bids
+// customerIDFromRequest returns the customer ID from X-Customer-ID or Authorization: Bearer <customer_id>. Empty if missing.
+func customerIDFromRequest(r *http.Request) string {
+	if id := r.Header.Get("X-Customer-ID"); id != "" {
+		return strings.TrimSpace(id)
+	}
+	auth := r.Header.Get("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimSpace(auth[7:])
+	}
+	return ""
+}
+
+// POST /bids — requires X-Customer-ID or Authorization: Bearer <customer_id>; validates ingress port ownership.
 func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	customerID := customerIDFromRequest(r)
+	if customerID == "" {
+		http.Error(w, "missing customer identity: set X-Customer-ID or Authorization: Bearer <customer_id>", http.StatusUnauthorized)
 		return
 	}
 
@@ -115,7 +135,21 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.bs.Put(r.Context(), bid, ""); err != nil {
+	if s.scenario != nil {
+		switchID := ""
+		if len(s.scenario.Switches) > 0 {
+			switchID = s.scenario.Switches[0].ID
+		}
+		if switchID != "" {
+			owner, ok := scenario.CustomerForIngressPort(s.scenario, switchID, uint32(*bid.IngressPort))
+			if !ok || owner != customerID {
+				http.Error(w, "ingress port not owned by this customer", http.StatusForbidden)
+				return
+			}
+		}
+	}
+
+	if err := s.bs.Put(r.Context(), bid, customerID); err != nil {
 		log.Printf("failed to store bid: %v", err)
 		http.Error(w, "failed to store bid", http.StatusInternalServerError)
 		return
