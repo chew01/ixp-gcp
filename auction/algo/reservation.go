@@ -6,8 +6,8 @@ import (
 	"github.com/chew01/ixp-gcp/auction/models"
 )
 
-func RunReservationPriceAuction(intervalID string, egressPort uint64, capacity uint64, bids []models.AuctionBid, rPrice int) ([]models.Allocation, int) {
-	bids = append(bids, models.AuctionBid{
+func RunReservationPriceAuction(intervalID string, egressPort uint64, capacity uint64, bids []models.Bid, rPrice int) ([]models.Allocation, int) {
+	bids = append(bids, models.Bid{
 		IngressPort: 99,
 		EgressPort:  egressPort,
 		Units:       capacity,
@@ -44,7 +44,7 @@ func RunReservationPriceAuction(intervalID string, egressPort uint64, capacity u
 	remaining = capacity
 
 	// Second pass: allocate
-	var marginalBids []models.AuctionBid
+	var marginalBids []models.Bid
 	var marginalDemand uint64
 
 	for _, bid := range bids {

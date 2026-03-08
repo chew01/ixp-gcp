@@ -8,18 +8,15 @@ RUN apk add --no-cache git bash
 WORKDIR /app
 
 # Copy go.mod and go.sum first for caching
-COPY telemetry/go.mod telemetry/go.sum ./
-# Copy shared package used by the telemetry module
-COPY shared ../shared
+COPY go.mod go.sum ./
 
-# Copy the source code so `go mod tidy` can evaluate imports
-COPY telemetry/ .
+COPY vendor ./vendor
 
-# Ensure module files are consistent and download dependencies
-RUN go mod tidy
+# Copy the source code
+COPY . .
 
 # Build the Go binary (static)
-RUN CGO_ENABLED=0 GOOS=linux go build -o telemetry-service
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o telemetry-service
 
 # ===== STAGE 2: Minimal runtime =====
 FROM alpine:3.22

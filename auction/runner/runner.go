@@ -83,7 +83,7 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 
 	// Create a map to hold the spans for each ingress port
 	bidSpans := make(map[uint64]trace.Span)
-	var bids []models.AuctionBid
+	var bids []models.Bid
 
 	mapID := fmt.Sprintf("bids-%d", egressPort)
 	bidMap, err := atomix.Map[string, string](mapID).
@@ -166,7 +166,7 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 				continue
 			}
 
-			bids = append(bids, models.AuctionBid{
+			bids = append(bids, models.Bid{
 				IngressPort: ingressPort,
 				EgressPort:  egressPort,
 				Units:       units,
@@ -222,7 +222,7 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 		span.End()
 	}
 
-	for _, alloc := range allocations { // TODO: remove switch constant
+	for _, alloc := range allocations {
 		err := r.WriteResults(auctionCtx, "sw-1", alloc.IngressPort, alloc.EgressPort, alloc.AllocatedUnits)
 		if err != nil {
 			msg := fmt.Sprintf("Error setting up: %v", err)

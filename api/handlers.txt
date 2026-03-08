@@ -1,4 +1,4 @@
-package main
+package handler
 
 import (
 	"context"
@@ -14,11 +14,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 )
-
-type Server struct {
-	fs FlowStore
-	bs BidStore
-}
 
 func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/chew01/ixp-gcp/shared"
 	localotel "github.com/chew01/ixp-gcp/shared/otel"
 	"github.com/chew01/ixp-gcp/shared/scenario"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -26,13 +27,6 @@ type DummyBidder struct {
 	url      string
 	http     *http.Client
 	scenario *scenario.Scenario
-}
-
-type Bid struct {
-	IngressPort *uint64 `json:"ingress_port"`
-	EgressPort  *uint64 `json:"egress_port"` // maps to auction
-	Units       *uint64 `json:"units"`       // bandwidth units (kbps)
-	UnitPrice   *int    `json:"unit_price"`  // price per unit
 }
 
 func NewDummyBidder(url string, scenario *scenario.Scenario) *DummyBidder {
@@ -63,7 +57,6 @@ func (b *DummyBidder) Run(ctx context.Context) {
 			for _, ePort := range b.scenario.Switches[0].EgressPorts {
 				// 10% chance to introduce a failure
 				shouldFail := rand.IntN(10) == 0
-				var bid *Bid
 				var method string = "POST"
 
 				ingressPort := uint64(inPort)
@@ -71,13 +64,14 @@ func (b *DummyBidder) Run(ctx context.Context) {
 				units := uint64(RandRange(0, 100))
 				unitPrice := RandRange(1, 100)
 
+				bid := &shared.BidRequest{}
 				if shouldFail {
 					// Randomly choose failure type
 					failType := rand.IntN(5)
 					switch failType {
 					case 0: // Method error - use GET instead of POST
 						method = "GET"
-						bid = &Bid{
+						bid = &shared.BidRequest{
 							IngressPort: &ingressPort,
 							EgressPort:  &egressPort,
 							Units:       &units,
@@ -86,24 +80,24 @@ func (b *DummyBidder) Run(ctx context.Context) {
 					case 1: // Missing fields - omit one field randomly (simple)
 						switch rand.IntN(4) {
 						case 0:
-							bid = &Bid{
+							bid = &shared.BidRequest{
 								Units:     &units,
 								UnitPrice: &unitPrice,
 							}
 						case 1:
-							bid = &Bid{
+							bid = &shared.BidRequest{
 								EgressPort: &egressPort,
 								Units:      &units,
 								UnitPrice:  &unitPrice,
 							}
 						case 2:
-							bid = &Bid{
+							bid = &shared.BidRequest{
 								IngressPort: &ingressPort,
 								Units:       &units,
 								UnitPrice:   &unitPrice,
 							}
 						case 3:
-							bid = &Bid{
+							bid = &shared.BidRequest{
 								IngressPort: &ingressPort,
 								EgressPort:  &egressPort,
 								UnitPrice:   &unitPrice,
@@ -111,7 +105,7 @@ func (b *DummyBidder) Run(ctx context.Context) {
 						}
 					case 2: // Out of range port number (use negative value)
 						negPort := -ingressPort // -1 as uint64 (all bits set)
-						bid = &Bid{
+						bid = &shared.BidRequest{
 							IngressPort: &negPort,
 							EgressPort:  &egressPort,
 							Units:       &units,
@@ -119,7 +113,7 @@ func (b *DummyBidder) Run(ctx context.Context) {
 						}
 					case 3: // Negative unit price
 						negUnitPrice := -unitPrice
-						bid = &Bid{
+						bid = &shared.BidRequest{
 							IngressPort: &ingressPort,
 							EgressPort:  &egressPort,
 							Units:       &units,
@@ -135,7 +129,7 @@ func (b *DummyBidder) Run(ctx context.Context) {
 							neg := -units
 							badUnits = &neg
 						}
-						bid = &Bid{
+						bid = &shared.BidRequest{
 							IngressPort: &ingressPort,
 							EgressPort:  &egressPort,
 							Units:       badUnits,
@@ -149,7 +143,7 @@ func (b *DummyBidder) Run(ctx context.Context) {
 					units := uint64(RandRange(0, 100))
 					unitPrice := RandRange(1, 100)
 
-					bid = &Bid{
+					bid = &shared.BidRequest{
 						IngressPort: &ingressPort,
 						EgressPort:  &egressPort,
 						Units:       &units,
@@ -173,16 +167,9 @@ func (b *DummyBidder) Run(ctx context.Context) {
 	}
 }
 
-func (b *DummyBidder) SubmitBid(ctx context.Context, bid *Bid, method string) error {
-	reqCtx, span := localotel.Tracer.Start(ctx, "submit-bid")
+func (b *DummyBidder) SubmitBid(ctx context.Context, bid *shared.BidRequest, method string) error {
+	local_ctx, span := localotel.Tracer.Start(ctx, "submit-bid")
 	defer span.End()
-
-	span.SetAttributes(
-		attribute.Int64("bid.ingress_port", int64(*bid.IngressPort)),
-		attribute.Int64("bid.egress_port", int64(*bid.EgressPort)),
-		attribute.Int64("bid.units", int64(*bid.Units)),
-		attribute.Int64("bid.unit_price", int64(*bid.UnitPrice)),
-	)
 
 	body, err := json.Marshal(bid)
 	if err != nil {
@@ -191,7 +178,7 @@ func (b *DummyBidder) SubmitBid(ctx context.Context, bid *Bid, method string) er
 		return fmt.Errorf("failed to marshal bid: %v", err)
 	}
 
-	req, err := http.NewRequestWithContext(reqCtx, method, b.url, bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(local_ctx, method, b.url, bytes.NewBuffer(body))
 	if err != nil {
 		span.SetStatus(codes.Error, "request creation error")
 		span.RecordError(err)
@@ -199,7 +186,7 @@ func (b *DummyBidder) SubmitBid(ctx context.Context, bid *Bid, method string) er
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	otel.GetTextMapPropagator().Inject(reqCtx, propagation.HeaderCarrier(req.Header))
+	otel.GetTextMapPropagator().Inject(local_ctx, propagation.HeaderCarrier(req.Header))
 
 	// 10% chance to randomly fail to submit
 	if rand.IntN(10) == 0 {
@@ -214,7 +201,7 @@ func (b *DummyBidder) SubmitBid(ctx context.Context, bid *Bid, method string) er
 			return fmt.Errorf("failed to submit bid: %v", err)
 		}
 		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			body, _ := io.ReadAll(resp.Body)
 			span.SetStatus(codes.Error, "failed to submit bid")
 			span.RecordError(fmt.Errorf("failed to submit bid: %v, response status: %v, body: %v", bid, resp.StatusCode, string(body)))

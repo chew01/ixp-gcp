@@ -1,0 +1,70 @@
+# Unified Observability Stack Configuration
+# kube-prometheus-stack values for Prometheus + Grafana
+
+# ==============================================================================
+# Grafana Configuration
+# ==============================================================================
+grafana:
+  adminPassword: "admin"
+  
+  # Enable sidecars for automatic datasource and dashboard loading
+  sidecar:
+    datasources:
+      enabled: true
+      label: grafana_datasource
+      searchNamespace: observability
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: observability
+      folder: /tmp/dashboards
+      defaultFolderName: "IXP Dashboards"
+  
+  # Disable persistence for local/minikube development
+  persistence:
+    enabled: false
+  
+  # Expose Grafana metrics
+  metrics:
+    enabled: true
+  
+  # Provision datasources directly via Helm
+  additionalDataSources:
+    - name: Jaeger
+      type: jaeger
+      url: http://jaeger.observability.svc.cluster.local:16686
+      access: proxy
+    - name: Loki
+      type: loki
+      url: http://loki.observability.svc.cluster.local:3100
+      access: proxy
+
+# ==============================================================================
+# Prometheus Configuration
+# ==============================================================================
+prometheus:
+  prometheusSpec:
+    # Scrape ALL ServiceMonitors in the cluster (not just helm releases)
+    serviceMonitorSelectorNilUsesHelmValues: false
+    
+    # Disable persistence for local/minikube
+    storageSpec: {}
+    
+    # Additional scrape configs to scrape OTEL Collector
+    additionalScrapeConfigs:
+      - job_name: 'otel-collector'
+        scrape_interval: 10s
+        static_configs:
+          - targets: ['otel-collector-opentelemetry-collector.observability.svc.cluster.local:8889']
+            labels:
+              service: 'otel-collector'
+
+# ==============================================================================
+# Optional: Disable components not needed for local development
+# ==============================================================================
+alertmanager:
+  enabled: false
+
+# Keep Prometheus Operator enabled (required for ServiceMonitors)
+prometheusOperator:
+  enabled: true

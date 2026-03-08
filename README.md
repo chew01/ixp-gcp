@@ -1,40 +1,48 @@
 # ixp-gcp
 
-### Telemetry Log Format
+### Prerequisites
+- [Go 1.25+](https://go.dev/doc/install)
+- [Docker](https://docs.docker.com/engine/install)
+- [Kubectl](https://kubernetes.io/docs/tasks/tools)
+- Working Kubernetes cluster
+- [Helm](helm.sh/docs/intro/install)
 
+### Setup
+```bash
+make setup
 ```
-Schema v1:
+This will register necessary helm repos.
 
-{
-  "schema_version": 1,
-  "switch_id": "sw-1",
-  "window_start_ns": 123,
-  "window_end_ns": 456,
-  "flows": [
-    {
-      "ingress_port": 1,
-      "egress_port": 5,
-      "bytes": 123456
-    }
-  ]
-}
+### Quick Start
+```bash
+make all
 ```
+This will set up all necessary infra and services, including:
+- **Infrastructure**: Minikube, Kafka, Atomix
+- **Observability**: Prometheus, Grafana, OTEL Collector, Jaeger, Loki
+- **Services**: API Gateway, Auction Runner, Telemetry Processor, Dummy Producer
 
-### Requirements
-- Install Helm
-- Install Helm charts for Atomix, Prometheus, Grafana
+#### Observability & Monitoring
+
+The system includes a complete observability stack for metrics, traces, and logs:
 
 ```bash
-# Helm repos
-helm repo add atomix https://atomix.github.io/charts.atomix.io
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo add grafana https://grafana.github.io/helm-charts
-helm repo update
+# Access Grafana (business metrics dashboard)
+make grafana-ui
+# Then visit: http://localhost:3000 (admin/admin)
+
+# Access Prometheus (raw metrics)
+kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090
+
+# Access Jaeger (distributed tracing)
+kubectl port-forward -n monitoring svc/jaeger-all-in-one-query 16686:16686
 ```
 
-### Design
-- Throughput for bids is in kbps
-- Throughput for telemetry entries is coerced to nearest kbps
+**Business Metrics Tracked:**
+- `ixp_flow_throughput` - Flow throughput in Kbps per switch/port
+- `ixp_flow_drop_rate` - Flow packet drop rate (planned)
+
+See [docs/observability-architecture.md](docs/observability-architecture.md) for detailed architecture information.
 
 ### References
 - [Atomix](https://atomix.github.io)
@@ -48,3 +56,8 @@ bin/kafka-console-consumer.sh \
 --from-beginning
 ```
 This prints all the records since the beginning.
+
+### Telemetry Log Format
+
+- Key: switch id
+- Value: see [shared/structs.go]()

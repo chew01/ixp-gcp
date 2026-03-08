@@ -1,11 +1,38 @@
 # OpenTelemetry Collector Configuration
 # This values.yaml configures the collector to receive OTLP data from your services
-# and export traces to Jaeger, metrics/logs to logging
+# and export traces to Jaeger, metrics to Prometheus, and logs to Loki
 
 mode: deployment
 
 image:
   repository: otel/opentelemetry-collector-contrib
+
+# Expose Prometheus metrics endpoint for scraping
+service:
+  type: ClusterIP
+
+ports:
+  otlp:
+    enabled: true
+    containerPort: 4317
+    servicePort: 4317
+    protocol: TCP
+  otlp-http:
+    enabled: true
+    containerPort: 4318
+    servicePort: 4318
+    protocol: TCP
+  prometheus:
+    enabled: true
+    containerPort: 8889
+    servicePort: 8889
+    protocol: TCP
+  jaeger-grpc:
+    enabled: false
+  jaeger-thrift-http:
+    enabled: false
+  zipkin:
+    enabled: false
 
 # OpenTelemetry Collector configuration
 config:
@@ -17,15 +44,30 @@ config:
         http:
           endpoint: 0.0.0.0:4318
 
+  processors:
+    batch:
+      timeout: 10s
+      send_batch_size: 1024
+
   exporters:
-    otlp/traces:
-      endpoint: jaeger.monitoring.svc.cluster.local:4317
+    # Export traces to Jaeger (all-in-one deployment)
+    otlp/jaeger:
+      endpoint: jaeger.observability.svc.cluster.local:4317
       tls:
         insecure: true
-    otlphttp/logs:
-      endpoint: http://loki.monitoring.svc.cluster.local:3100/otlp
-    otlphttp/metrics:
-      endpoint: http://prometheus-server.monitoring.svc.cluster.local:80/api/v1/otlp
+    
+    # Export logs to Loki
+    otlphttp/loki:
+      endpoint: http://loki.observability.svc.cluster.local:3100/otlp
+    
+    # Export metrics to Prometheus (expose endpoint for scraping)
+    prometheus:
+      endpoint: 0.0.0.0:8889
+      # namespace: ixp  # Removed to avoid double ixp_ prefix since instruments already have ixp. prefix
+      const_labels:
+        environment: development
+    
+    # Debug exporter for troubleshooting
     debug:
       verbosity: detailed
 
@@ -38,10 +80,13 @@ config:
     pipelines:
       traces:
         receivers: [otlp]
-        exporters: [otlp/traces, debug]
+        processors: [batch]
+        exporters: [otlp/jaeger, debug]
       logs:
         receivers: [otlp]
-        exporters: [otlphttp/logs, debug]
+        processors: [batch]
+        exporters: [otlphttp/loki, debug]
       metrics:
         receivers: [otlp]
-        exporters: [otlphttp/metrics, debug]
+        processors: [batch]
+        exporters: [prometheus, debug]

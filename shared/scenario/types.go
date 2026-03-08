@@ -13,7 +13,7 @@ type Scenario struct {
 
 type Switch struct {
 	ID           string   `yaml:"id"`
-	IngressPorts []uint64 `yaml:"ingress_ports"`
-	EgressPorts  []uint64 `yaml:"egress_ports"`
-	MaxCapacity  uint64   `yaml:"max_capacity"` // assuming all egress ports are similar bandwidth
+	IngressPorts []uint32 `yaml:"ingress_ports"`
+	EgressPorts  []uint32 `yaml:"egress_ports"`
+	MaxCapacity  uint64   `yaml:"max_capacity"`
 }

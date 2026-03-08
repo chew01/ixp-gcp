@@ -21,6 +21,10 @@ type DummyProducer struct {
 	switchID string
 	kafka    *kafka.Writer
 	scenario *scenario.Scenario
+	counters map[string]struct {
+		rx uint64
+		tx uint64
+	}
 }
 
 func NewDummyProducer(writer *kafka.Writer, scenario *scenario.Scenario) *DummyProducer {
@@ -28,6 +32,10 @@ func NewDummyProducer(writer *kafka.Writer, scenario *scenario.Scenario) *DummyP
 		switchID: scenario.Switches[0].ID,
 		kafka:    writer,
 		scenario: scenario,
+		counters: make(map[string]struct {
+			rx uint64
+			tx uint64
+		}),
 	}
 }
 
@@ -39,57 +47,80 @@ func (p *DummyProducer) Run(ctx context.Context) {
 		slog.ErrorContext(ctx, "Failed to parse telemetry interval", "error", err, "interval", p.scenario.TelemetryInterval)
 		return // or log.Fatal(err) if you want to exit
 	}
-	for {
-		ctx, span := localotel.Tracer.Start(ctx, "produce-telemetry", trace.WithNewRoot())
-		windowStartNs := time.Now().UnixNano()
-		time.Sleep(interval)
-		windowEndNs := time.Now().UnixNano()
 
-		var flows []shared.Flow
-		for _, inPort := range p.scenario.Switches[0].IngressPorts {
-			for _, ePort := range p.scenario.Switches[0].EgressPorts {
-				f := shared.Flow{
-					IngressPort: inPort,
-					EgressPort:  ePort,
-					Bytes:       uint64(RandRange(5e5, 2e6)),
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			ctx, span := localotel.Tracer.Start(ctx, "produce-telemetry", trace.WithNewRoot())
+			var messages []kafka.Message
+
+			for _, inPort := range p.scenario.Switches[0].IngressPorts {
+				for _, ePort := range p.scenario.Switches[0].EgressPorts {
+
+					flowKey := fmt.Sprintf("%d-%d", inPort, ePort)
+
+					// Get previous counters
+					state := p.counters[flowKey]
+
+					// Simulate traffic increase per interval
+					rxIncrease := uint64(RandRange(10_000, 200_000))
+					txIncrease := rxIncrease - uint64(RandRange(0, 5_000)) // simulate drops
+
+					// Monotonic increment (wrap happens automatically at 2^64)
+					state.rx += rxIncrease
+					state.tx += txIncrease
+
+					// Save back
+					p.counters[flowKey] = state
+
+					t := shared.TelemetryRecord{
+						FlowID: shared.Flow{
+							IngressPort:  inPort,
+							EgressPort:   ePort,
+							SourceVLANID: 10,
+							DestVLANID:   20,
+						},
+						RxByteCount: state.rx,
+						TxByteCount: state.tx,
+					}
+
+					value, err := json.Marshal(t)
+					if err != nil {
+						span.SetStatus(codes.Error, "failed to marshal telemetry record")
+						span.RecordError(err)
+						slog.ErrorContext(ctx, "Failed to marshal telemetry record", "error", err)
+						continue // Skip this cycle on error
+					}
+
+					messages = append(messages, kafka.Message{
+						Key:   []byte(p.switchID),
+						Value: value,
+					})
 				}
-				flows = append(flows, f)
+			}
+
+			if err := p.kafka.WriteMessages(ctx, messages...); err != nil {
+				msg := fmt.Sprintf("Failed to write %d messages to Kafka: %v", len(messages), err)
+				span.SetStatus(codes.Error, "failed to write telemetry to Kafka")
+				span.RecordError(err)
+				slog.ErrorContext(ctx, msg,
+					"number_of_messages", len(messages),
+					"error", err,
+				)
+				continue // Skip metrics/logging on error
+			} else {
+				flowsProduced.Add(ctx, int64(len(messages)), metric.WithAttributes(attribute.String("switch_id", p.scenario.Switches[0].ID)))
+				msg := fmt.Sprintf("Produced %d records", len(messages))
+				slog.DebugContext(ctx, msg,
+					"number_of_messages", len(messages),
+				)
+				span.End()
 			}
 		}
-
-		r := shared.TelemetryRecord{
-			SwitchID:      p.scenario.Switches[0].ID,
-			WindowStartNS: windowStartNs,
-			WindowEndNS:   windowEndNs,
-			Flows:         flows,
-		}
-
-		key := fmt.Sprintf("%s|%d", p.scenario.Switches[0].ID, windowStartNs)
-		value, err := json.Marshal(r)
-		if err != nil {
-			span.SetStatus(codes.Error, "failed to marshal telemetry record")
-			span.RecordError(err)
-			slog.ErrorContext(ctx, "Failed to marshal telemetry record", "error", err)
-			continue // Skip this cycle on error
-		}
-
-		err = p.kafka.WriteMessages(ctx, kafka.Message{
-			Key:   []byte(key),
-			Value: value,
-		})
-		if err != nil {
-			span.SetStatus(codes.Error, "failed to write telemetry to Kafka")
-			span.RecordError(err)
-			slog.ErrorContext(ctx, "Failed to write telemetry to Kafka", "error", err, "topic", p.kafka.Topic, "key", key)
-			continue // Skip metrics/logging on error
-		}
-		flowsProduced.Add(ctx, int64(len(flows)), metric.WithAttributes(attribute.String("switch_id", p.scenario.Switches[0].ID)))
-		slog.DebugContext(ctx, "Produced telemetry flows",
-			"flow_count", len(flows),
-			"switch_id", p.scenario.Switches[0].ID,
-			"window_start_ns", windowStartNs,
-			"window_end_ns", windowEndNs,
-		)
-		span.End()
 	}
 }

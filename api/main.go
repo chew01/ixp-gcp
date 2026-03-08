@@ -22,73 +22,65 @@ func main() {
 }
 
 func run() error {
-	// Handle SIGINT (CTRL+C) gracefully.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	// Set up OpenTelemetry.
+	// 1. Setup OTel (Your feature branch logic)
 	otelShutdown, err := localotel.SetupOTelSDK(ctx)
 	if err != nil {
 		return err
 	}
-
-	// Initialize OTel-integrated logger (must be after OTel SDK setup)
 	localotel.InitInstruments()
-
-	// Handle shutdown properly so nothing leaks.
 	defer func() {
-		err = errors.Join(err, otelShutdown(context.Background()))
+		_ = otelShutdown(context.Background())
 	}()
 
-	// Start HTTP server.
+	// 2. Initialize Stores (Incoming changes logic)
+	fs, err := NewAtomixFlowStore(ctx)
+	if err != nil {
+		return err
+	}
+	bs := NewAtomixBidStore()
+
+	server := &Server{
+		fs: fs,
+		bs: bs,
+	}
+
+	server.InitServerMetrics()
+
+	// 3. Main API Mux (Port 8080)
+	appMux := http.NewServeMux()
+	appMux.HandleFunc("/flows", server.getFlows)
+	appMux.HandleFunc("/bids", server.postBid)
+
+	// Wrap with OTel instrumentation
+	handler := otelhttp.NewHandler(appMux, "api-gateway")
+
 	srv := &http.Server{
 		Addr:         ":8080",
+		Handler:      handler,
 		BaseContext:  func(net.Listener) context.Context { return ctx },
-		ReadTimeout:  time.Second,
+		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
-		Handler:      newHTTPHandler(),
 	}
 
-	slog.Info("HTTP telemetry API listening on :8080")
-
-	srvErr := make(chan error, 1)
+	// Start servers
+	errChan := make(chan error, 2)
 	go func() {
-		srvErr <- srv.ListenAndServe()
+		slog.Info("API Gateway listening", "port", 8080)
+		errChan <- srv.ListenAndServe()
 	}()
 
-	// Wait for interruption.
 	select {
-	case err = <-srvErr:
-		// Error when starting HTTP server.
+	case err := <-errChan:
 		return err
 	case <-ctx.Done():
-		// Wait for first CTRL+C.
-		// Stop receiving signal notifications as soon as possible.
-		stop()
+		slog.Info("Shutting down gracefully...")
 	}
 
-	// When Shutdown is called, ListenAndServe immediately returns ErrServerClosed.
-	err = srv.Shutdown(context.Background())
-	return err
-}
-
-func newHTTPHandler() http.Handler {
-	server := &Server{
-		fs: &AtomixFlowStore{},
-		bs: &AtomixBidStore{},
-	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/flows", server.getFlows)
-	mux.HandleFunc("/bids", server.postBid)
-	mux.HandleFunc("/metrics", server.getMetrics)
-	// No instrumentation for healthz check
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	})
-
-	// Add HTTP instrumentation for the whole server.
-	handler := otelhttp.NewHandler(mux, "http-api-gateway")
-	return handler
+	// Graceful Shutdown
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return errors.Join(srv.Shutdown(shutdownCtx))
 }
