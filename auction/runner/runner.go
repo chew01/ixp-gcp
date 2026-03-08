@@ -85,10 +85,15 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 		key := any(entry.Key).(string)
 		value := any(entry.Value).(string)
 		valueParts := strings.Split(value, "|")
+		customerID := ""
+		if len(valueParts) >= 3 {
+			customerID = valueParts[2]
+		}
 
 		ingressPort, err := strconv.ParseUint(key, 10, 64)
 		if err != nil {
 			log.Printf("Error parsing ingress port: %v", err)
+			continue
 		}
 		units, err := strconv.ParseUint(valueParts[0], 10, 64)
 		if err != nil {
@@ -106,6 +111,7 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 			EgressPort:  egressPort,
 			Units:       units,
 			UnitPrice:   unitPrice,
+			CustomerID:  customerID,
 		})
 	}
 

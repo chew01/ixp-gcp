@@ -6,6 +6,7 @@ type Bid struct {
 	EgressPort  uint64 `json:"egress_port"` // maps to auction
 	Units       uint64 `json:"units"`       // bandwidth units (kbps)
 	UnitPrice   int    `json:"unit_price"`  // price per unit
+	CustomerID  string `json:"customer_id"` // from token; used for attribution/credits
 	IsVirtual   bool
 }
 
@@ -16,4 +17,5 @@ type Allocation struct {
 	AllocatedUnits uint64
 	ClearingPrice  int
 	Interval       string
+	CustomerID     string `json:"customer_id"` // from winning bid; for credits attribution
 }

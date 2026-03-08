@@ -68,7 +68,7 @@ func (s *AtomixFlowStore) List(ctx context.Context) ([]string, error) {
 // ============================================================
 
 type BidStore interface {
-	Put(ctx context.Context, bid shared.BidRequest) error
+	Put(ctx context.Context, bid shared.BidRequest, customerID string) error
 }
 
 type AtomixBidStore struct {
@@ -99,14 +99,15 @@ func (s *AtomixBidStore) getOrCreateMap(ctx context.Context, egressPort uint32) 
 	return m, nil
 }
 
-func (s *AtomixBidStore) Put(ctx context.Context, bid shared.BidRequest) error {
+func (s *AtomixBidStore) Put(ctx context.Context, bid shared.BidRequest, customerID string) error {
 	bidMap, err := s.getOrCreateMap(ctx, uint32(*bid.EgressPort))
 	if err != nil {
 		return err
 	}
 
 	key := fmt.Sprintf("%d", *bid.IngressPort)
-	value := fmt.Sprintf("%d|%d", *bid.Units, *bid.UnitPrice)
+	// Value format: units|unitPrice|customerID (last-write-wins per ingress/egress)
+	value := fmt.Sprintf("%d|%d|%s", *bid.Units, *bid.UnitPrice, customerID)
 
 	if _, err := bidMap.Put(ctx, key, value); err != nil {
 		return fmt.Errorf("failed to store bid for ingress port %d: %w", *bid.IngressPort, err)

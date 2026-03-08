@@ -115,7 +115,7 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.bs.Put(r.Context(), bid); err != nil {
+	if err := s.bs.Put(r.Context(), bid, ""); err != nil {
 		log.Printf("failed to store bid: %v", err)
 		http.Error(w, "failed to store bid", http.StatusInternalServerError)
 		return
