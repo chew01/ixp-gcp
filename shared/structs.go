@@ -33,3 +33,9 @@ type TelemetryRecord struct {
 	RxByteCount uint64 `json:"rx_byte_count"`
 	TxByteCount uint64 `json:"tx_byte_count"`
 }
+
+// CustomerCredits is the value format for the credits map (key = customer ID).
+type CustomerCredits struct {
+	TotalSpent      int `json:"total_spent"`
+	StartingBalance int `json:"starting_balance,omitempty"`
+}

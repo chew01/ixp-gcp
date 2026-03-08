@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -120,5 +121,93 @@ func (s *AtomixBidStore) Put(ctx context.Context, bid shared.BidRequest, custome
 		log.Printf("[bids-%d] %d bids stored", *bid.EgressPort, length)
 	}
 
+	return nil
+}
+
+// ============================================================
+// CreditsStore
+// ============================================================
+
+type CreditsStore interface {
+	Get(ctx context.Context, customerID string) (shared.CustomerCredits, error)
+	List(ctx context.Context) ([]string, error) // customer IDs
+	AddSpent(ctx context.Context, customerID string, amount int) error
+	// InitCustomerIfMissing ensures the customer has an entry (total_spent=0); no-op if already present.
+	InitCustomerIfMissing(ctx context.Context, customerID string) error
+}
+
+type AtomixCreditsStore struct {
+	creditsMap atomixmap.Map[string, string]
+}
+
+func NewAtomixCreditsStore(ctx context.Context) (*AtomixCreditsStore, error) {
+	m, err := atomix.Map[string, string]("credits-map").
+		Codec(generic.Scalar[string]()).
+		Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to init credits map: %w", err)
+	}
+	return &AtomixCreditsStore{creditsMap: m}, nil
+}
+
+func (s *AtomixCreditsStore) Get(ctx context.Context, customerID string) (shared.CustomerCredits, error) {
+	entry, err := s.creditsMap.Get(ctx, customerID)
+	if err != nil {
+		return shared.CustomerCredits{}, nil // no entry yet
+	}
+	var cred shared.CustomerCredits
+	if err := json.Unmarshal([]byte(entry.Value), &cred); err != nil {
+		return shared.CustomerCredits{}, fmt.Errorf("invalid credits value for %s: %w", customerID, err)
+	}
+	return cred, nil
+}
+
+func (s *AtomixCreditsStore) List(ctx context.Context) ([]string, error) {
+	var keys []string
+	entries, err := s.creditsMap.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list credits: %w", err)
+	}
+	for {
+		entry, err := entries.Next()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, fmt.Errorf("iterate credits: %w", err)
+		}
+		keys = append(keys, entry.Key)
+	}
+	return keys, nil
+}
+
+func (s *AtomixCreditsStore) AddSpent(ctx context.Context, customerID string, amount int) error {
+	cred, _ := s.Get(ctx, customerID)
+	cred.TotalSpent += amount
+	b, err := json.Marshal(cred)
+	if err != nil {
+		return fmt.Errorf("marshal credits: %w", err)
+	}
+	if _, err := s.creditsMap.Put(ctx, customerID, string(b)); err != nil {
+		return fmt.Errorf("update credits for %s: %w", customerID, err)
+	}
+	return nil
+}
+
+// InitCustomerIfMissing creates a zero credits entry for the customer if the key is not yet in the map.
+// Existing entries are left unchanged so total_spent is never overwritten.
+func (s *AtomixCreditsStore) InitCustomerIfMissing(ctx context.Context, customerID string) error {
+	_, err := s.creditsMap.Get(ctx, customerID)
+	if err == nil {
+		return nil // already has an entry
+	}
+	cred := shared.CustomerCredits{}
+	b, err := json.Marshal(cred)
+	if err != nil {
+		return fmt.Errorf("marshal credits: %w", err)
+	}
+	if _, err := s.creditsMap.Put(ctx, customerID, string(b)); err != nil {
+		return fmt.Errorf("init credits for %s: %w", customerID, err)
+	}
 	return nil
 }

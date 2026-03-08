@@ -134,6 +134,11 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 		log.Printf("Allocated %d units (%d->%d)", alloc.AllocatedUnits, alloc.IngressPort, alloc.EgressPort)
 	}
 
+	// Bill credits: allocated_units * clearing_price per customer (grouped)
+	if err := r.updateCredits(ctx, allocations, clearingPrice); err != nil {
+		log.Printf("Error updating credits: %v", err)
+	}
+
 	err = bidMap.Clear(ctx)
 	if err != nil {
 		log.Printf("Error clearing bids: %v", err)
@@ -160,6 +165,49 @@ func (r *AuctionRunner) WriteResults(ctx context.Context, switchID string, ingre
 	})
 
 	return err
+}
+
+func (r *AuctionRunner) updateCredits(ctx context.Context, allocations []models.Allocation, clearingPrice int) error {
+	// Group spend by customer: allocated_units * clearing_price
+	spendByCustomer := make(map[string]int)
+	for _, alloc := range allocations {
+		if alloc.CustomerID == "" {
+			continue
+		}
+		amount := int(alloc.AllocatedUnits) * clearingPrice
+		spendByCustomer[alloc.CustomerID] += amount
+	}
+	if len(spendByCustomer) == 0 {
+		return nil
+	}
+
+	creditsMap, err := atomix.Map[string, string]("credits-map").
+		Codec(generic.Scalar[string]()).
+		Get(ctx)
+	if err != nil {
+		return fmt.Errorf("get credits map: %w", err)
+	}
+
+	for customerID, amount := range spendByCustomer {
+		entry, err := creditsMap.Get(ctx, customerID)
+		var cred shared.CustomerCredits
+		if err == nil && entry.Value != "" {
+			if err := json.Unmarshal([]byte(entry.Value), &cred); err != nil {
+				log.Printf("invalid credits value for %s: %v", customerID, err)
+				continue
+			}
+		}
+		cred.TotalSpent += amount
+		b, err := json.Marshal(cred)
+		if err != nil {
+			return fmt.Errorf("marshal credits: %w", err)
+		}
+		if _, err := creditsMap.Put(ctx, customerID, string(b)); err != nil {
+			return fmt.Errorf("update credits for %s: %w", customerID, err)
+		}
+		log.Printf("[credits] %s spent %d (total %d)", customerID, amount, cred.TotalSpent)
+	}
+	return nil
 }
 
 func currentIntervalID(interval time.Duration) string {

@@ -36,15 +36,21 @@ var (
 		Name: "ixp_flow_drop_rate_percent",
 		Help: "Flow packet drop rate as a percentage",
 	}, []string{"switch_id", "ingress_port", "egress_port"})
+
+	customerCreditsSpent = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ixp_customer_credits_spent_total",
+		Help: "Total credits spent by customer (accounting only)",
+	}, []string{"customer_id"})
 )
 
 func init() {
-	prometheus.MustRegister(flowThroughput, flowEgressKbps, flowDropKbps, flowDropRate)
+	prometheus.MustRegister(flowThroughput, flowEgressKbps, flowDropKbps, flowDropRate, customerCreditsSpent)
 }
 
 type Server struct {
 	fs       FlowStore
 	bs       BidStore
+	cs       CreditsStore
 	scenario *scenario.Scenario
 }
 
@@ -159,10 +165,46 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("bid accepted"))
 }
 
+// GET /credits?customer_id=as12345 — returns total_spent and optionally starting_balance
+func (s *Server) getCredits(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	customerID := r.URL.Query().Get("customer_id")
+	if customerID == "" {
+		http.Error(w, "missing customer_id query parameter", http.StatusBadRequest)
+		return
+	}
+	cred, err := s.cs.Get(r.Context(), customerID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("error fetching credits: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cred)
+}
+
 // GET /metrics — Prometheus scrape endpoint
 func (s *Server) getMetrics(w http.ResponseWriter, r *http.Request) {
 	s.refreshMetrics(r.Context())
+	s.refreshCreditsMetrics(r.Context())
 	promhttp.Handler().ServeHTTP(w, r)
+}
+
+func (s *Server) refreshCreditsMetrics(ctx context.Context) {
+	keys, err := s.cs.List(ctx)
+	if err != nil {
+		log.Printf("failed to list credits keys: %v", err)
+		return
+	}
+	for _, customerID := range keys {
+		cred, err := s.cs.Get(ctx, customerID)
+		if err != nil {
+			continue
+		}
+		customerCreditsSpent.With(prometheus.Labels{"customer_id": customerID}).Set(float64(cred.TotalSpent))
+	}
 }
 
 func (s *Server) refreshMetrics(ctx context.Context) {
