@@ -1,5 +1,13 @@
 package shared
 
+// FlowMetricsValue is the stored value format for flow metrics (one per flow key in the throughput map).
+type FlowMetricsValue struct {
+	ThroughputKbps float64 `json:"throughput_kbps"` // ingress Kbps
+	EgressKbps     float64 `json:"egress_kbps"`
+	DropKbps       float64 `json:"drop_kbps"`
+	DropRatePct    float64 `json:"drop_rate_pct"`
+}
+
 type BidRequest struct {
 	IngressPort *uint64 `json:"ingress_port"`
 	EgressPort  *uint64 `json:"egress_port"` // maps to auction

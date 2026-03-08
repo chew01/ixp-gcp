@@ -21,6 +21,16 @@ var (
 		Help: "Flow throughput in Kbps",
 	}, []string{"switch_id", "ingress_port", "egress_port"})
 
+	flowEgressKbps = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ixp_flow_egress_kbps",
+		Help: "Flow egress throughput in Kbps",
+	}, []string{"switch_id", "ingress_port", "egress_port"})
+
+	flowDropKbps = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ixp_flow_drop_kbps",
+		Help: "Flow drop rate in Kbps",
+	}, []string{"switch_id", "ingress_port", "egress_port"})
+
 	flowDropRate = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "ixp_flow_drop_rate_percent",
 		Help: "Flow packet drop rate as a percentage",
@@ -28,12 +38,27 @@ var (
 )
 
 func init() {
-	prometheus.MustRegister(flowThroughput, flowDropRate)
+	prometheus.MustRegister(flowThroughput, flowEgressKbps, flowDropKbps, flowDropRate)
 }
 
 type Server struct {
 	fs FlowStore
 	bs BidStore
+}
+
+// parseFlowMetricsValue parses the stored string into FlowMetricsValue.
+// Backward compatible: if the value is a single number (old format), it is treated as throughput_kbps; other fields are 0.
+func parseFlowMetricsValue(raw string) (shared.FlowMetricsValue, error) {
+	var v shared.FlowMetricsValue
+	if err := json.Unmarshal([]byte(raw), &v); err == nil {
+		return v, nil
+	}
+	// Old format: single float (throughput only)
+	var kbps float64
+	if _, err := fmt.Sscanf(raw, "%f", &kbps); err != nil {
+		return shared.FlowMetricsValue{}, fmt.Errorf("invalid flow metrics format: %q", raw)
+	}
+	return shared.FlowMetricsValue{ThroughputKbps: kbps}, nil
 }
 
 // GET /flows?switch_id=sw-1&ingress_port=1&egress_port=10
@@ -62,8 +87,14 @@ func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	metrics, err := parseFlowMetricsValue(value)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("error parsing flow metrics: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{flowKey: value})
+	json.NewEncoder(w).Encode(map[string]shared.FlowMetricsValue{flowKey: metrics})
 }
 
 // POST /bids
@@ -114,13 +145,16 @@ func (s *Server) refreshMetrics(ctx context.Context) {
 			continue
 		}
 
-		throughput, err := s.fs.Get(ctx, flowKey)
-		if err != nil || throughput == "" {
-			throughput = "0"
+		raw, err := s.fs.Get(ctx, flowKey)
+		if err != nil || raw == "" {
+			raw = "0"
 		}
 
-		var kbps float64
-		fmt.Sscanf(throughput, "%f", &kbps)
+		metrics, err := parseFlowMetricsValue(raw)
+		if err != nil {
+			log.Printf("failed to parse flow metrics for %s: %v", flowKey, err)
+			continue
+		}
 
 		labels := prometheus.Labels{
 			"switch_id":    switchID,
@@ -128,7 +162,10 @@ func (s *Server) refreshMetrics(ctx context.Context) {
 			"egress_port":  fmt.Sprint(egress),
 		}
 
-		flowThroughput.With(labels).Set(kbps)
+		flowThroughput.With(labels).Set(metrics.ThroughputKbps)
+		flowEgressKbps.With(labels).Set(metrics.EgressKbps)
+		flowDropKbps.With(labels).Set(metrics.DropKbps)
+		flowDropRate.With(labels).Set(metrics.DropRatePct)
 	}
 }
 
