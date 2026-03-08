@@ -14,4 +14,12 @@ switches:
     egress_ports: [0]
     max_capacity: 100
 
+customers:
+  - id: as12345
+    switch_id: sw-1
+    ingress_ports: [1, 2, 3, 4, 5]
+  - id: as67890
+    switch_id: sw-1
+    ingress_ports: [6, 7, 8, 9, 10]
+
 
