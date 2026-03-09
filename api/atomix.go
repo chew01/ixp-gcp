@@ -125,6 +125,56 @@ func (s *AtomixBidStore) Put(ctx context.Context, bid shared.BidRequest, custome
 }
 
 // ============================================================
+// AuctionHistoryStore
+// ============================================================
+
+type AuctionHistoryStore interface {
+	Get(ctx context.Context, key string) (string, error)
+	List(ctx context.Context) ([]string, error)
+}
+
+type AtomixAuctionHistoryStore struct {
+	historyMap atomixmap.Map[string, string]
+}
+
+func NewAtomixAuctionHistoryStore(ctx context.Context) (*AtomixAuctionHistoryStore, error) {
+	m, err := atomix.Map[string, string]("auction-history").
+		Codec(generic.Scalar[string]()).
+		Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to init auction history map: %w", err)
+	}
+	return &AtomixAuctionHistoryStore{historyMap: m}, nil
+}
+
+func (s *AtomixAuctionHistoryStore) Get(ctx context.Context, key string) (string, error) {
+	entry, err := s.historyMap.Get(ctx, key)
+	if err != nil {
+		return "", fmt.Errorf("auction history %s not found: %w", key, err)
+	}
+	return entry.Value, nil
+}
+
+func (s *AtomixAuctionHistoryStore) List(ctx context.Context) ([]string, error) {
+	var keys []string
+	entries, err := s.historyMap.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list auction history: %w", err)
+	}
+	for {
+		entry, err := entries.Next()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, fmt.Errorf("failed to iterate auction history: %w", err)
+		}
+		keys = append(keys, entry.Key)
+	}
+	return keys, nil
+}
+
+// ============================================================
 // CreditsStore
 // ============================================================
 

@@ -30,6 +30,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to create credits store: %v", err)
 	}
+	hs, err := NewAtomixAuctionHistoryStore(ctx)
+	if err != nil {
+		log.Fatalf("failed to create auction history store: %v", err)
+	}
 	// Ensure every customer from the scenario has a credits entry (total_spent=0) so GET /credits and Prometheus show them from the start.
 	seen := make(map[string]bool)
 	for _, c := range scen.Customers {
@@ -46,6 +50,7 @@ func main() {
 		fs:       fs,
 		bs:       bs,
 		cs:       cs,
+		hs:       hs,
 		scenario: scen,
 	}
 
@@ -53,6 +58,7 @@ func main() {
 	appMux.HandleFunc("/flows", server.getFlows)
 	appMux.HandleFunc("/bids", server.postBid)
 	appMux.HandleFunc("/credits", server.getCredits)
+	appMux.HandleFunc("/auctions", server.getAuctions)
 	appMux.HandleFunc("/metrics", server.getMetrics)
 
 	metricsMux := http.NewServeMux()

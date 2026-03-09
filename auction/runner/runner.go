@@ -122,7 +122,6 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 
 	log.Printf("[Auction %d] %d bids for %d units", egressPort, len(bids), capacity)
 
-	// allocations, clearingPrice := algo.RunUniformPriceAuction(intervalID, capacity, bids)
 	allocations, clearingPrice := algo.RunReservationPriceAuction(intervalID, egressPort, capacity, bids, r.scenario.ReservationPrice)
 
 	for _, alloc := range allocations {
@@ -134,9 +133,15 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 		log.Printf("Allocated %d units (%d->%d)", alloc.AllocatedUnits, alloc.IngressPort, alloc.EgressPort)
 	}
 
+	// Bill credits per customer.
 	// Bill credits: allocated_units * clearing_price per customer (grouped)
 	if err := r.updateCredits(ctx, allocations, clearingPrice); err != nil {
 		log.Printf("Error updating credits: %v", err)
+	}
+
+	// Store auction history, including clearing price and per-customer allocations.
+	if err := r.storeAuctionHistory(ctx, intervalID, egressPort, clearingPrice, allocations); err != nil {
+		log.Printf("Error storing auction history: %v", err)
 	}
 
 	err = bidMap.Clear(ctx)
@@ -207,6 +212,44 @@ func (r *AuctionRunner) updateCredits(ctx context.Context, allocations []models.
 		}
 		log.Printf("[credits] %s spent %d (total %d)", customerID, amount, cred.TotalSpent)
 	}
+	return nil
+}
+
+func (r *AuctionRunner) storeAuctionHistory(ctx context.Context, intervalID string, egressPort uint64, clearingPrice int, allocations []models.Allocation) error {
+	historyMap, err := atomix.Map[string, string]("auction-history").
+		Codec(generic.Scalar[string]()).
+		Get(ctx)
+	if err != nil {
+		return fmt.Errorf("get auction history map: %w", err)
+	}
+
+	record := shared.AuctionHistoryRecord{
+		Interval:      intervalID,
+		EgressPort:    egressPort,
+		ClearingPrice: clearingPrice,
+	}
+
+	for _, alloc := range allocations {
+		if alloc.CustomerID == "" || alloc.AllocatedUnits == 0 {
+			continue
+		}
+		record.Allocations = append(record.Allocations, shared.AuctionCustomerAllocation{
+			CustomerID:  alloc.CustomerID,
+			IngressPort: alloc.IngressPort,
+			Units:       alloc.AllocatedUnits,
+		})
+	}
+
+	b, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("marshal auction history: %w", err)
+	}
+
+	key := fmt.Sprintf("%s|%d", intervalID, egressPort)
+	if _, err := historyMap.Put(ctx, key, string(b)); err != nil {
+		return fmt.Errorf("put auction history for %s: %w", key, err)
+	}
+
 	return nil
 }
 

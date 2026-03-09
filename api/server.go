@@ -51,6 +51,7 @@ type Server struct {
 	fs       FlowStore
 	bs       BidStore
 	cs       CreditsStore
+	hs       AuctionHistoryStore
 	scenario *scenario.Scenario
 }
 
@@ -76,10 +77,25 @@ func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	customerID := customerIDFromRequest(r)
+	if customerID == "" {
+		http.Error(w, "missing customer identity: set X-Customer-ID or Authorization: Bearer <customer_id>", http.StatusUnauthorized)
+		return
+	}
+
 	switchID, ingress, egress, err := parseFlowParams(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	// Enforce that the requested ingress port belongs to the authenticated customer.
+	if s.scenario != nil {
+		owner, ok := scenario.CustomerForIngressPort(s.scenario, switchID, uint32(ingress))
+		if !ok || owner != customerID {
+			http.Error(w, "flow not owned by this customer", http.StatusForbidden)
+			return
+		}
 	}
 
 	flowKey := buildFlowKey(switchID, ingress, egress)
@@ -165,24 +181,89 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("bid accepted"))
 }
 
-// GET /credits?customer_id=as12345 — returns total_spent and optionally starting_balance
+// GET /credits — returns total_spent and optionally starting_balance for the authenticated customer
 func (s *Server) getCredits(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	customerID := r.URL.Query().Get("customer_id")
-	if customerID == "" {
-		http.Error(w, "missing customer_id query parameter", http.StatusBadRequest)
+
+	customerToken := customerIDFromRequest(r)
+	if customerToken == "" {
+		http.Error(w, "missing customer identity: set X-Customer-ID or Authorization: Bearer <customer_id>", http.StatusUnauthorized)
 		return
 	}
-	cred, err := s.cs.Get(r.Context(), customerID)
+
+	cred, err := s.cs.Get(r.Context(), customerToken)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("error fetching credits: %v", err), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(cred)
+}
+
+// GET /auctions?egress_port=0 — returns auction history (clearing prices and own allocations) for the authenticated customer.
+func (s *Server) getAuctions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	customerID := customerIDFromRequest(r)
+	if customerID == "" {
+		http.Error(w, "missing customer identity: set X-Customer-ID or Authorization: Bearer <customer_id>", http.StatusUnauthorized)
+		return
+	}
+
+	var filterEgress uint64
+	if egressStr := r.URL.Query().Get("egress_port"); egressStr != "" {
+		v, err := strconv.ParseUint(egressStr, 10, 64)
+		if err != nil {
+			http.Error(w, "invalid egress_port: must be an integer", http.StatusBadRequest)
+			return
+		}
+		filterEgress = v
+	}
+
+	keys, err := s.hs.List(r.Context())
+	if err != nil {
+		http.Error(w, fmt.Sprintf("error listing auction history: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	var out []shared.AuctionHistoryRecord
+
+	for _, key := range keys {
+		raw, err := s.hs.Get(r.Context(), key)
+		if err != nil || raw == "" {
+			continue
+		}
+		var rec shared.AuctionHistoryRecord
+		if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+			log.Printf("failed to unmarshal auction history %s: %v", key, err)
+			continue
+		}
+		if filterEgress != 0 && rec.EgressPort != filterEgress {
+			continue
+		}
+
+		// Filter allocations so the caller only sees its own entries.
+		if len(rec.Allocations) > 0 {
+			var own []shared.AuctionCustomerAllocation
+			for _, alloc := range rec.Allocations {
+				if alloc.CustomerID == customerID {
+					own = append(own, alloc)
+				}
+			}
+			rec.Allocations = own
+		}
+
+		out = append(out, rec)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
 }
 
 // GET /metrics — Prometheus scrape endpoint
