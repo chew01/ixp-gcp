@@ -1,10 +1,10 @@
-VENDOR_MODULES = api auction dummy telemetry
+VENDOR_MODULES = api auction dummy telemetry agent
 
 # ============================================================
 # Individual deploys
 # ============================================================
 .PHONY: deploy-minikube deploy-kafka deploy-atomix deploy-api \
-        deploy-auction deploy-dummy deploy-telemetry deploy-monitoring
+        deploy-auction deploy-dummy deploy-telemetry deploy-agent deploy-monitoring
 
 deploy-api:
 	@echo "==> Deploying API Gateway..."
@@ -65,6 +65,12 @@ deploy-telemetry:
 	minikube image load telemetry-service:local
 	kubectl apply -f ./telemetry/deployment.yaml
 
+deploy-agent:
+	@echo "==> Deploying Customer Agent..."
+	docker build -t customer-agent:local ./agent
+	minikube image load customer-agent:local
+	kubectl apply -f ./agent/deployment.yaml
+
 # ============================================================
 # Grouped deploys
 # ============================================================
@@ -72,7 +78,7 @@ deploy-telemetry:
 
 infra: deploy-minikube deploy-kafka deploy-atomix deploy-config deploy-monitoring
 
-services: vendor deploy-api deploy-auction deploy-dummy deploy-telemetry
+services: vendor deploy-api deploy-auction deploy-dummy deploy-telemetry deploy-agent
 
 all: infra services
 

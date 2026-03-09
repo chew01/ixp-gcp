@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: customer-agent-as12345
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: customer-agent-as12345
+  template:
+    metadata:
+      labels:
+        app: customer-agent-as12345
+    spec:
+      containers:
+      - name: customer-agent
+        image: customer-agent:local
+        env:
+          - name: CUSTOMER_ID
+            value: "as12345"
+          - name: API_BASE_URL
+            value: "http://api-gateway"
+          - name: SCENARIO_PATH
+            value: /etc/scenario/scenario.yaml
+        volumeMounts:
+          - name: scenario-volume
+            mountPath: /etc/scenario
+            readOnly: true
+      volumes:
+        - name: scenario-volume
+          configMap:
+            name: test-scenario
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: customer-agent-as67890
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: customer-agent-as67890
+  template:
+    metadata:
+      labels:
+        app: customer-agent-as67890
+    spec:
+      containers:
+      - name: customer-agent
+        image: customer-agent:local
+        env:
+          - name: CUSTOMER_ID
+            value: "as67890"
+          - name: API_BASE_URL
+            value: "http://api-gateway"
+          - name: SCENARIO_PATH
+            value: /etc/scenario/scenario.yaml
+        volumeMounts:
+          - name: scenario-volume
+            mountPath: /etc/scenario
+            readOnly: true
+      volumes:
+        - name: scenario-volume
+          configMap:
+            name: test-scenario
+
