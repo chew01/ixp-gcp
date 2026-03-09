@@ -40,7 +40,9 @@ func NewAtomixFlowStore(ctx context.Context) (*AtomixFlowStore, error) {
 func (s *AtomixFlowStore) Get(ctx context.Context, flowKey string) (string, error) {
 	entry, err := s.throughputMap.Get(ctx, flowKey)
 	if err != nil {
-		return "", fmt.Errorf("flow %s not found: %w", flowKey, err)
+		// Treat missing keys as "not found" and let callers decide how to surface
+		// this (e.g. 404 from the API or a skipped flow in an agent).
+		return "", nil
 	}
 	return entry.Value, nil
 }

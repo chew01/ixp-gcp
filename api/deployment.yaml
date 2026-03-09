@@ -24,6 +24,18 @@ spec:
             containerPort: 8080
           - name: metrics
             containerPort: 9090
+        env:
+          - name: SCENARIO_PATH
+            value: /etc/scenario/scenario.yaml
+        volumeMounts:
+          - name: scenario-volume
+            mountPath: /etc/scenario
+            readOnly: true
+
+      volumes:
+        - name: scenario-volume
+          configMap:
+            name: test-scenario
 ---
 
 apiVersion: v1

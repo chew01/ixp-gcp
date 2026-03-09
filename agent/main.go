@@ -138,6 +138,7 @@ func deriveCustomerPorts(scene *scenario.Scenario, customerID string) []customer
 }
 
 func runOnce(ctx context.Context, client *http.Client, cfg config, scene *scenario.Scenario, ports []customerPorts) error {
+	log.Printf("running once for %s", cfg.CustomerID)
 	credits, err := fetchCredits(ctx, client, cfg)
 	if err != nil {
 		log.Printf("failed to fetch credits: %v", err)
@@ -146,12 +147,14 @@ func runOnce(ctx context.Context, client *http.Client, cfg config, scene *scenar
 	for _, cp := range ports {
 		for _, in := range cp.Ingress {
 			for _, eg := range cp.Egress {
+				log.Printf("placing bid for %s in=%d eg=%d", cp.SwitchID, in, eg)
 				if err := placeBidForFlow(ctx, client, cfg, scene, cp.SwitchID, in, eg, credits); err != nil {
 					log.Printf("placeBidForFlow error for %s in=%d eg=%d: %v", cp.SwitchID, in, eg, err)
 				}
 			}
 		}
 	}
+	log.Printf("finished running once for %s", cfg.CustomerID)
 	return nil
 }
 
@@ -330,4 +333,3 @@ func fetchLastClearingPrice(ctx context.Context, client *http.Client, cfg config
 	last := records[len(records)-1]
 	return last.ClearingPrice
 }
-

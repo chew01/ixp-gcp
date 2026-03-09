@@ -261,7 +261,7 @@ This document is a step-by-step plan to extend the distributed SDN control plane
 - [x] Agent fetches customer-scoped flows, credits, and auction history, computes bids for own ingress ports only, POSTs with `X-Customer-ID`.
 - [x] Simple strategy: e.g. bid to sustain or slightly exceed current throughput at low price; document extension points for smarter strategies.
 - [x] Dockerfile and Kubernetes manifest (or Helm) for one agent per customer.
-- [ ] Document removal/deprecation of dummy bidder for production.
+- [x] Document removal/deprecation of dummy bidder for production.
 
 ---
 
@@ -279,6 +279,34 @@ This document is a step-by-step plan to extend the distributed SDN control plane
 
 ---
 
+## Phase 9: Dummy bidder deprecation (demo-only)
+
+**Goal:** Keep the dummy bidder code for demos and tests, but remove it from the default deployment path so production-style setups use only customer agents.
+
+### 9.1 Deployment changes
+
+- **Makefile:**
+  - Remove `deploy-dummy` from the default `services` target so `make services` / `make all` do **not** deploy the dummy bidder.
+  - Keep the `deploy-dummy` target available for manual or demo use.
+  - Optionally add a `demo-services` target that includes `deploy-dummy` for quick demo setups.
+- **Docs / comments:**
+  - Mark the dummy bidder in `dummy/` as **demo-only** and not part of the production path.
+
+### 9.2 Behavior and ownership
+
+- Production-like deployments:
+  - Use the auction runner, telemetry, API gateway, and customer agents only.
+  - All bids in the system should originate from agents that use customer-scoped APIs and tokens.
+- Demo / testing deployments:
+  - May still use the dummy bidder to quickly exercise the auction path without configuring agents.
+
+### 9.3 Checklist Phase 9
+
+- [ ] Update `Makefile` so `services` does not deploy the dummy bidder by default; keep `deploy-dummy` for opt-in use (and/or add a `demo-services` target).
+- [ ] Add comments and/or README notes clarifying that the dummy bidder is demo-only and that customer agents are the production bidder.
+
+---
+
 ## Implementation order summary
 
 | Order | Phase | Depends on |
@@ -291,6 +319,7 @@ This document is a step-by-step plan to extend the distributed SDN control plane
 | 6 | Phase 6: Customer-scoped APIs and auction history | Phase 1, 3, 4, 5 |
 | 7 | Phase 7: Customer agent (new component, replace dummy) | Phase 1, 3, 4, 5, 6 |
 | 8 | Phase 8: Docs and tests | All |
+| 9 | Phase 9: Dummy bidder deprecation (demo-only) | 7 |
 
 Phase 1 can be done in parallel with Phase 2. Phases 3–5 should be done in the order above so that by the time the agent is implemented, token validation, bid storage with customer ID, and credits attribution are in place.
 

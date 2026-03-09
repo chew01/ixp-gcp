@@ -176,6 +176,7 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to store bid", http.StatusInternalServerError)
 		return
 	}
+	log.Printf("bid stored for %s in=%d eg=%d", customerID, *bid.IngressPort, *bid.EgressPort)
 
 	w.WriteHeader(http.StatusAccepted)
 	w.Write([]byte("bid accepted"))
