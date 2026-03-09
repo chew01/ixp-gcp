@@ -257,22 +257,22 @@ This document is a step-by-step plan to extend the distributed SDN control plane
 
 ### 7.6 Checklist Phase 7
 
-- [ ] New `agent/` (or `customer-agent/`) package: main, HTTP client, config from env (CUSTOMER_ID, API URL, scenario path or API topology).
-- [ ] Agent fetches customer-scoped flows, credits, and auction history, computes bids for own ingress ports only, POSTs with `X-Customer-ID`.
-- [ ] Simple strategy: e.g. bid to sustain or slightly exceed current throughput at low price; document extension points for smarter strategies.
-- [ ] Dockerfile and Kubernetes manifest (or Helm) for one agent per customer.
+- [x] New `agent/` (or `customer-agent/`) package: main, HTTP client, config from env (CUSTOMER_ID, API URL, scenario path or API topology).
+- [x] Agent fetches customer-scoped flows, credits, and auction history, computes bids for own ingress ports only, POSTs with `X-Customer-ID`.
+- [x] Simple strategy: e.g. bid to sustain or slightly exceed current throughput at low price; document extension points for smarter strategies.
+- [x] Dockerfile and Kubernetes manifest (or Helm) for one agent per customer.
 - [ ] Document removal/deprecation of dummy bidder for production.
 
 ---
 
 ## Phase 8: Documentation and testing
 
-### 7.1 Docs
+### 8.1 Docs
 
 - Update **README.md**: describe customers, scenario `customers` section, token (header) for bids, credits (accounting only), and that one agent per customer is the production bidder.
 - Update **docs/sequence.md**: add customer in the auction sequence (user/agent → API with token → bid stored with customer ID → runner attributes and bills credits).
 
-### 7.2 Testing
+### 8.2 Testing
 
 - **Unit:** Parsing of new map value formats (flow metrics JSON, bid value with customer ID); scenario validation (customer port ownership).
 - **Integration:** API accepts bid with valid token and correct ingress; rejects missing/forbidden token; runner attributes and updates credits; agent can list flows and submit bids for its customer only.

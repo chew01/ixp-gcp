@@ -85,7 +85,7 @@ all: infra services
 # ============================================================
 # Utilities
 # ============================================================
-.PHONY: vendor logs setup grafana-ui stop
+.PHONY: vendor logs setup grafana-ui stop test
 
 vendor:
 	@for mod in $(VENDOR_MODULES); do \
@@ -112,3 +112,8 @@ stop:
 
 proto:
 	cd shared/proto && mkdir -p pb && protoc -I . --go_out=pb --go_opt=paths=source_relative *.proto
+
+test:
+	@echo "==> Running unit tests..."
+	cd api && go test ./... && cd ..
+	cd agent && go test ./... && cd ..
