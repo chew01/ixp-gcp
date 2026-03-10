@@ -110,6 +110,14 @@ deploy-observability:
 	kubectl label configmap ixp-bids-dashboard \
 		-n observability grafana_dashboard="1" --overwrite
 	
+	# Apply IXP Auctions dashboard
+	@echo "==> Deploying IXP Auctions dashboard..."
+	kubectl create configmap ixp-auctions-dashboard \
+		--from-file=ixp-auction.json=./monitoring/ixp-auction.json \
+		-n observability -o yaml --dry-run=client | kubectl apply -f -
+	kubectl label configmap ixp-auctions-dashboard \
+		-n observability grafana_dashboard="1" --overwrite
+	
 	@echo ""
 	@echo "✅ Observability stack deployed successfully!"
 	@echo ""

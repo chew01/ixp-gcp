@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/chew01/ixp-gcp/shared"
 	localotel "github.com/chew01/ixp-gcp/shared/otel"
@@ -18,6 +19,7 @@ import (
 )
 
 var (
+	bidMetricsOnce    sync.Once
 	flowThroughput    metric.Float64ObservableGauge
 	flowDropRate      metric.Float64ObservableGauge
 	bidPriceHistogram metric.Int64Histogram
@@ -27,72 +29,73 @@ var (
 // InitServerMetrics initializes the instruments using the Meter
 // created by your boilerplate code.
 func (s *Server) InitServerMetrics() {
-	var err error
+	bidMetricsOnce.Do(func() {
+		var err error
 
-	// OTel will call this automatically every 3 seconds (based on otel.go config).
-	callback := func(ctx context.Context, observer metric.Float64Observer) error {
-		// 1. Get all flow keys from Atomix (e.g., ["sw-1:1:10", "sw-1:2:20"])
-		keys, err := s.fs.List(ctx)
-		if err != nil {
-			return err
-		}
-
-		for _, key := range keys {
-			// 2. Fetch the value for this specific flow
-			val, err := s.fs.Get(ctx, key)
+		// OTel will call this automatically every 3 seconds (based on otel.go config).
+		callback := func(ctx context.Context, observer metric.Float64Observer) error {
+			// 1. Get all flow keys from Atomix (e.g., ["sw-1:1:10", "sw-1:2:20"])
+			keys, err := s.fs.List(ctx)
 			if err != nil {
-				continue // Skip if a specific flow fails
+				return err
 			}
 
-			// 3. Parse the key and value (using your existing logic)
-			swID, ingress, egress, _ := parseFlowKey(key)
-			byteCount, _ := strconv.ParseFloat(val, 64)
+			for _, key := range keys {
+				// 2. Fetch the value for this specific flow
+				val, err := s.fs.Get(ctx, key)
+				if err != nil {
+					continue // Skip if a specific flow fails
+				}
 
-			attrs := attribute.NewSet(
-				attribute.String("switch_id", swID),
-				attribute.Int("ingress_port", ingress),
-				attribute.Int("egress_port", egress),
-			)
+				// 3. Parse the key and value (using your existing logic)
+				swID, ingress, egress, _ := parseFlowKey(key)
+				byteCount, _ := strconv.ParseFloat(val, 64)
 
-			// 4. Record the observation
-			observer.Observe(byteCount, metric.WithAttributeSet(attrs))
+				attrs := attribute.NewSet(
+					attribute.String("switch_id", swID),
+					attribute.Int("ingress_port", ingress),
+					attribute.Int("egress_port", egress),
+				)
+
+				// 4. Record the observation
+				observer.Observe(byteCount, metric.WithAttributeSet(attrs))
+			}
+			return nil
 		}
-		return nil
-	}
 
-	// localotel.Meter is initialized in your otel-init.go
-	flowThroughput, err = localotel.Meter.Float64ObservableGauge(
-		"ixp.flow.throughput",
-		metric.WithDescription("Flow throughput in Kbps"),
-		metric.WithUnit("kbps"),
-		metric.WithFloat64Callback(callback),
-	)
-	flowDropRate, err = localotel.Meter.Float64ObservableGauge(
-		"ixp.flow.drop_rate",
-		metric.WithDescription("Flow packet drop rate as a percentage"),
-		metric.WithUnit("%"),
-	)
-	if err != nil {
-		slog.Error("Failed to initialise flowThroughput and flowDropRate metrics", "error", err)
-	}
+		// localotel.Meter is initialized in your otel-init.go
+		flowThroughput, err = localotel.Meter.Float64ObservableGauge(
+			"ixp.flow.throughput",
+			metric.WithDescription("Flow throughput in Kbps"),
+			metric.WithUnit("kbps"),
+			metric.WithFloat64Callback(callback),
+		)
+		flowDropRate, err = localotel.Meter.Float64ObservableGauge(
+			"ixp.flow.drop_rate",
+			metric.WithDescription("Flow packet drop rate as a percentage"),
+			metric.WithUnit("%"),
+		)
+		if err != nil {
+			slog.Error("Failed to initialise flowThroughput and flowDropRate metrics", "error", err)
+		}
 
-	// Initialize Bid Price Histogram
-	bidPriceHistogram, err = localotel.Meter.Int64Histogram(
-		"ixp.bid.price",
-		metric.WithDescription("Distribution of bid unit prices"),
-		metric.WithUnit("SGD"), // or whatever your currency is
-	)
+		// Initialize Bid Price Histogram
+		bidPriceHistogram, err = localotel.Meter.Int64Histogram(
+			"ixp.bid.price",
+			metric.WithDescription("Distribution of bid unit prices"),
+			metric.WithUnit("SGD"), // or whatever your currency is
+		)
 
-	// Initialize Bid Units Histogram (Bandwidth demand)
-	bidUnitHistogram, err = localotel.Meter.Int64Histogram(
-		"ixp.bid.units",
-		metric.WithDescription("Distribution of bandwidth units requested"),
-		metric.WithUnit("kbps"),
-	)
-	if err != nil {
-		slog.Error("Failed to initialize bid histograms", "error", err)
-	}
-
+		// Initialize Bid Units Histogram (Bandwidth demand)
+		bidUnitHistogram, err = localotel.Meter.Int64Histogram(
+			"ixp.bid.units",
+			metric.WithDescription("Distribution of bandwidth units requested"),
+			metric.WithUnit("kbps"),
+		)
+		if err != nil {
+			slog.Error("Failed to initialize bid histograms", "error", err)
+		}
+	})
 }
 
 type Server struct {

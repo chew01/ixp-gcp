@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/atomix/go-sdk/pkg/atomix"
@@ -22,7 +23,21 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
+)
+
+var (
+	auctionMetricsOnce             sync.Once
+	auctionRunsCounter             metric.Int64Counter
+	auctionBidsTotalCounter        metric.Int64Counter
+	auctionBidsAllocatedCounter    metric.Int64Counter
+	auctionBidsUnallocatedCounter  metric.Int64Counter
+	auctionRequestedUnitsCounter   metric.Int64Counter
+	auctionAllocatedUnitsCounter   metric.Int64Counter
+	auctionClearingPriceHist       metric.Int64Histogram
+	auctionBidAllocationRatioHist  metric.Float64Histogram
+	auctionUnitAllocationRatioHist metric.Float64Histogram
 )
 
 // AuctionRunner owns the auction loop
@@ -33,11 +48,99 @@ type AuctionRunner struct {
 }
 
 func New(writer *kafka.Writer, interval time.Duration, scenario *scenario.Scenario) *AuctionRunner {
+	initAuctionMetrics()
 	return &AuctionRunner{
 		writer:   writer,
 		interval: interval,
 		scenario: scenario,
 	}
+}
+
+func initAuctionMetrics() {
+	auctionMetricsOnce.Do(func() {
+		var err error
+
+		auctionRunsCounter, err = localotel.Meter.Int64Counter(
+			"ixp.auction.runs.total",
+			metric.WithDescription("Total number of auction runs"),
+			metric.WithUnit("1"),
+		)
+		if err != nil {
+			slog.Error("failed to initialize auctionRunsCounter", "error", err)
+		}
+
+		auctionBidsTotalCounter, err = localotel.Meter.Int64Counter(
+			"ixp.auction.bids.total",
+			metric.WithDescription("Total number of bids observed by auction runs"),
+			metric.WithUnit("1"),
+		)
+		if err != nil {
+			slog.Error("failed to initialize auctionBidsTotalCounter", "error", err)
+		}
+
+		auctionBidsAllocatedCounter, err = localotel.Meter.Int64Counter(
+			"ixp.auction.bids.allocated",
+			metric.WithDescription("Total number of bids that received an allocation"),
+			metric.WithUnit("1"),
+		)
+		if err != nil {
+			slog.Error("failed to initialize auctionBidsAllocatedCounter", "error", err)
+		}
+
+		auctionBidsUnallocatedCounter, err = localotel.Meter.Int64Counter(
+			"ixp.auction.bids.unallocated",
+			metric.WithDescription("Total number of bids that received no allocation"),
+			metric.WithUnit("1"),
+		)
+		if err != nil {
+			slog.Error("failed to initialize auctionBidsUnallocatedCounter", "error", err)
+		}
+
+		auctionRequestedUnitsCounter, err = localotel.Meter.Int64Counter(
+			"ixp.auction.units.requested",
+			metric.WithDescription("Total number of bandwidth units requested by bids"),
+			metric.WithUnit("kbps"),
+		)
+		if err != nil {
+			slog.Error("failed to initialize auctionRequestedUnitsCounter", "error", err)
+		}
+
+		auctionAllocatedUnitsCounter, err = localotel.Meter.Int64Counter(
+			"ixp.auction.units.allocated",
+			metric.WithDescription("Total number of bandwidth units allocated by auctions"),
+			metric.WithUnit("kbps"),
+		)
+		if err != nil {
+			slog.Error("failed to initialize auctionAllocatedUnitsCounter", "error", err)
+		}
+
+		auctionClearingPriceHist, err = localotel.Meter.Int64Histogram(
+			"ixp.auction.clearing_price",
+			metric.WithDescription("Distribution of auction clearing prices"),
+			metric.WithUnit("SGD"),
+		)
+		if err != nil {
+			slog.Error("failed to initialize auctionClearingPriceHist", "error", err)
+		}
+
+		auctionBidAllocationRatioHist, err = localotel.Meter.Float64Histogram(
+			"ixp.auction.bid_allocation_ratio",
+			metric.WithDescription("Per-run ratio of allocated bids to total bids"),
+			metric.WithUnit("1"),
+		)
+		if err != nil {
+			slog.Error("failed to initialize auctionBidAllocationRatioHist", "error", err)
+		}
+
+		auctionUnitAllocationRatioHist, err = localotel.Meter.Float64Histogram(
+			"ixp.auction.unit_allocation_ratio",
+			metric.WithDescription("Per-run ratio of allocated units to requested units"),
+			metric.WithUnit("1"),
+		)
+		if err != nil {
+			slog.Error("failed to initialize auctionUnitAllocationRatioHist", "error", err)
+		}
+	})
 }
 
 func (r *AuctionRunner) Run(ctx context.Context) {
@@ -72,6 +175,10 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 		trace.WithNewRoot(),
 		trace.WithAttributes(attribute.Int("egressPort", int(egressPort))))
 	defer auctionSpan.End()
+	attrs := metric.WithAttributes(
+		attribute.Int64("egress_port", int64(egressPort)),
+	)
+	auctionRunsCounter.Add(auctionCtx, 1, attrs)
 	intervalID := currentIntervalID(r.interval)
 	auctionSpan.SetAttributes(attribute.String("intervalID", intervalID))
 
@@ -178,6 +285,17 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 	}
 
 	if capacity <= 0 || len(bids) == 0 {
+		if len(bids) > 0 {
+			var requestedUnits uint64
+			for _, bid := range bids {
+				requestedUnits += bid.Units
+			}
+			auctionBidsTotalCounter.Add(auctionCtx, int64(len(bids)), attrs)
+			auctionBidsUnallocatedCounter.Add(auctionCtx, int64(len(bids)), attrs)
+			auctionRequestedUnitsCounter.Add(auctionCtx, int64(requestedUnits), attrs)
+			auctionBidAllocationRatioHist.Record(auctionCtx, 0, attrs)
+			auctionUnitAllocationRatioHist.Record(auctionCtx, 0, attrs)
+		}
 		slog.DebugContext(auctionCtx, "No capacity or no bids, skipping auction")
 		return
 	}
@@ -215,6 +333,41 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 				attribute.String("auction.interval", alloc.Interval),
 			)
 		}
+	}
+
+	allocatedBidSet := make(map[uint64]struct{}, len(allocations))
+	var requestedUnits uint64
+	for _, bid := range bids {
+		requestedUnits += bid.Units
+	}
+
+	var allocatedUnits uint64
+	for _, alloc := range allocations {
+		allocatedUnits += alloc.AllocatedUnits
+		if alloc.AllocatedUnits > 0 {
+			allocatedBidSet[alloc.IngressPort] = struct{}{}
+		}
+	}
+
+	allocatedBids := len(allocatedBidSet)
+	unallocatedBids := len(bids) - allocatedBids
+	if unallocatedBids < 0 {
+		unallocatedBids = 0
+	}
+
+	auctionBidsTotalCounter.Add(auctionCtx, int64(len(bids)), attrs)
+	auctionBidsAllocatedCounter.Add(auctionCtx, int64(allocatedBids), attrs)
+	auctionBidsUnallocatedCounter.Add(auctionCtx, int64(unallocatedBids), attrs)
+	auctionRequestedUnitsCounter.Add(auctionCtx, int64(requestedUnits), attrs)
+	auctionAllocatedUnitsCounter.Add(auctionCtx, int64(allocatedUnits), attrs)
+	auctionClearingPriceHist.Record(auctionCtx, int64(clearingPrice), attrs)
+
+	bidAllocationRatio := float64(allocatedBids) / float64(len(bids))
+	auctionBidAllocationRatioHist.Record(auctionCtx, bidAllocationRatio, attrs)
+
+	if requestedUnits > 0 {
+		unitAllocationRatio := float64(allocatedUnits) / float64(requestedUnits)
+		auctionUnitAllocationRatioHist.Record(auctionCtx, unitAllocationRatio, attrs)
 	}
 
 	// End all bid spans
