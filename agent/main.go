@@ -61,6 +61,14 @@ func selectStrategy(name string) (strategy.Bidder, error) {
 		return strategy.Conservative{}, nil
 	case "demand_corrected":
 		return strategy.DemandCorrected{}, nil
+	case "price_insensitive":
+		return strategy.NewPriceInsensitive(), nil
+	case "backoff":
+		return strategy.NewBackoff(), nil
+	case "budget_aware":
+		return strategy.BudgetAware{}, nil
+	case "exploratory":
+		return strategy.NewExploratory(), nil
 	default:
 		return nil, fmt.Errorf("unknown strategy %q", name)
 	}
