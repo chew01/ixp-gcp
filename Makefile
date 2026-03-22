@@ -1,6 +1,32 @@
 VENDOR_MODULES = api auction dummy telemetry agent
 
 # ============================================================
+# External Kafka support
+#
+# Plaintext (in-cluster Strimzi default):
+#   make infra
+#
+# External cluster, plaintext:
+#   make infra KAFKA_EXTERNAL=true KAFKA_BOOTSTRAP=192.168.1.50:9092
+#   make services KAFKA_BOOTSTRAP=192.168.1.50:9092
+#
+# External cluster with mTLS (e.g. Aiven):
+#   kubectl create secret generic kafka-tls \
+#     --from-file=ca.pem --from-file=service.cert --from-file=service.key
+#   (add the volume/volumeMount for the secret to each deployment.yaml)
+#   make services \
+#     KAFKA_BOOTSTRAP=kafka-xxx.aivencloud.com:12345 \
+#     KAFKA_TLS_CA_FILE=/etc/kafka-tls/ca.pem \
+#     KAFKA_TLS_CERT_FILE=/etc/kafka-tls/service.cert \
+#     KAFKA_TLS_KEY_FILE=/etc/kafka-tls/service.key
+# ============================================================
+KAFKA_BOOTSTRAP    ?= ixp-kafka-kafka-bootstrap:9092
+KAFKA_TLS_CA_FILE  ?=
+KAFKA_TLS_CERT_FILE ?=
+KAFKA_TLS_KEY_FILE  ?=
+
+
+# ============================================================
 # Individual deploys
 # ============================================================
 .PHONY: deploy-minikube deploy-kafka deploy-atomix deploy-api \
@@ -25,6 +51,13 @@ deploy-auction:
 	docker build -t auction-runner:local ./auction
 	minikube image load auction-runner:local
 	kubectl apply -f ./auction/deployment.yaml
+	kubectl set env deployment/auction-runner KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
+ifdef KAFKA_TLS_CA_FILE
+	kubectl set env deployment/auction-runner \
+		KAFKA_TLS_CA_FILE=$(KAFKA_TLS_CA_FILE) \
+		KAFKA_TLS_CERT_FILE=$(KAFKA_TLS_CERT_FILE) \
+		KAFKA_TLS_KEY_FILE=$(KAFKA_TLS_KEY_FILE)
+endif
 
 deploy-config:
 	@echo "==> Deploying Scenario Config..."
@@ -35,17 +68,27 @@ deploy-dummy:
 	docker build -t dummy-producer:local ./dummy
 	minikube image load dummy-producer:local
 	kubectl apply -f ./dummy/deployment.yaml
+	kubectl set env deployment/dummy-producer KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
+ifdef KAFKA_TLS_CA_FILE
+	kubectl set env deployment/dummy-producer \
+		KAFKA_TLS_CA_FILE=$(KAFKA_TLS_CA_FILE) \
+		KAFKA_TLS_CERT_FILE=$(KAFKA_TLS_CERT_FILE) \
+		KAFKA_TLS_KEY_FILE=$(KAFKA_TLS_KEY_FILE)
+endif
 
 deploy-kafka:
-	@echo "==> Deploying Kafka..."
+ifndef KAFKA_EXTERNAL
+	@echo "==> Deploying Kafka (in-cluster Strimzi)..."
 	helm install strimzi-cluster-operator oci://quay.io/strimzi-helm/strimzi-kafka-operator
 	kubectl apply -f ./kafka/kafka.yaml
 	kubectl wait kafka/ixp-kafka --for=condition=Ready --timeout=300s
+else
+	@echo "Skipping Strimzi — using external Kafka at $(KAFKA_BOOTSTRAP)"
+endif
 
 deploy-minikube:
 	@echo "==> Deploying Minikube..."
-	minikube delete
-	minikube start
+	minikube start --cpus=4 --memory=8192
 	minikube addons enable ingress
 
 deploy-monitoring:
@@ -64,6 +107,13 @@ deploy-telemetry:
 	docker build -t telemetry-service:local ./telemetry
 	minikube image load telemetry-service:local
 	kubectl apply -f ./telemetry/deployment.yaml
+	kubectl set env deployment/telemetry-service KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
+ifdef KAFKA_TLS_CA_FILE
+	kubectl set env deployment/telemetry-service \
+		KAFKA_TLS_CA_FILE=$(KAFKA_TLS_CA_FILE) \
+		KAFKA_TLS_CERT_FILE=$(KAFKA_TLS_CERT_FILE) \
+		KAFKA_TLS_KEY_FILE=$(KAFKA_TLS_KEY_FILE)
+endif
 
 deploy-agent:
 	@echo "==> Deploying Customer Agent..."
@@ -76,7 +126,8 @@ deploy-agent:
 # ============================================================
 .PHONY: infra services all
 
-infra: deploy-minikube deploy-kafka deploy-atomix deploy-config deploy-monitoring
+infra: deploy-atomix deploy-config deploy-monitoring
+	$(MAKE) deploy-kafka $(if $(KAFKA_EXTERNAL),KAFKA_EXTERNAL=$(KAFKA_EXTERNAL),) KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
 
 services: vendor deploy-api deploy-auction deploy-dummy deploy-telemetry deploy-agent
 

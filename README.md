@@ -78,3 +78,19 @@ This prints all the records since the beginning.
 
 - Key: switch id
 - Value: see [shared/structs.go]()
+
+### Kafka setup
+On Aiven, create topics:
+- switch-telemetry
+- auction-results
+
+For external broker usage, place ca.pem, service.cert and service.key in the certs directory, then run:
+```bash
+make deploy-minikube
+kubectl create secret generic kafka-tls \
+--from-file=ca.pem=certs/ca.pem \
+--from-file=service.cert=certs/service.cert \
+--from-file=service.key=certs/service.key
+make all KAFKA_EXTERNAL=true KAFKA_BOOTSTRAP=$ADDRESS KAFKA_TLS_CA_FILE=/etc/kafka-tls/ca.pem KAFKA_TLS_CERT_FILE=/etc/kafka-tls/service.cert KAFKA_TLS_KEY_FILE=/etc/kafka-tls/service.key
+```
+Remember to put the actual address.
