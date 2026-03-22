@@ -136,7 +136,7 @@ all: infra services
 # ============================================================
 # Utilities
 # ============================================================
-.PHONY: vendor logs setup grafana-ui stop test
+.PHONY: vendor logs setup grafana-ui prometheus-ui stop test export-metrics
 
 vendor:
 	@for mod in $(VENDOR_MODULES); do \
@@ -152,11 +152,53 @@ setup:
 	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 	helm repo update
 
+# Prometheus URL used by export-metrics (override for in-cluster or remote access).
+# Run `make prometheus-ui` first to forward the port, then use the default.
+PROMETHEUS_URL ?= http://localhost:9090
+
 grafana-ui:
 	kubectl port-forward svc/monitoring-grafana 3000:80 -n monitoring &
 	@echo "Grafana at http://localhost:3000"
 	@echo "Password: $$(kubectl get secret monitoring-grafana -n monitoring \
 		-o jsonpath='{.data.admin-password}' | base64 --decode)"
+
+prometheus-ui:
+	kubectl port-forward svc/monitoring-kube-promethe-prometheus 9090:9090 -n monitoring &
+	@echo "Prometheus at http://localhost:9090"
+
+# Export key experiment metrics from Prometheus for the last hour.
+# Usage: make export-metrics [PROMETHEUS_URL=http://...] [SINCE=2h]
+# Output: data/experiment-<timestamp>.json
+SINCE ?= 1h
+export-metrics:
+	@mkdir -p data
+	@TS=$$(date +%Y%m%d-%H%M%S); FILE=data/experiment-$$TS.json; \
+	printf '{"clearing_price":' > $$FILE; \
+	curl -sG "$(PROMETHEUS_URL)/api/v1/query_range" \
+		--data-urlencode "query=ixp_auction_clearing_price" \
+		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s 2>/dev/null || date -v-$(SINCE) +%s)" \
+		--data-urlencode "end=$$(date +%s)" \
+		--data-urlencode "step=30s" >> $$FILE; \
+	printf ',"allocation_kbps":' >> $$FILE; \
+	curl -sG "$(PROMETHEUS_URL)/api/v1/query_range" \
+		--data-urlencode "query=ixp_customer_allocation_kbps" \
+		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s 2>/dev/null || date -v-$(SINCE) +%s)" \
+		--data-urlencode "end=$$(date +%s)" \
+		--data-urlencode "step=30s" >> $$FILE; \
+	printf ',"flow_drop_rate":' >> $$FILE; \
+	curl -sG "$(PROMETHEUS_URL)/api/v1/query_range" \
+		--data-urlencode "query=ixp_flow_drop_rate_percent" \
+		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s 2>/dev/null || date -v-$(SINCE) +%s)" \
+		--data-urlencode "end=$$(date +%s)" \
+		--data-urlencode "step=30s" >> $$FILE; \
+	printf ',"flow_throughput":' >> $$FILE; \
+	curl -sG "$(PROMETHEUS_URL)/api/v1/query_range" \
+		--data-urlencode "query=ixp_flow_throughput_kbps" \
+		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s 2>/dev/null || date -v-$(SINCE) +%s)" \
+		--data-urlencode "end=$$(date +%s)" \
+		--data-urlencode "step=30s" >> $$FILE; \
+	printf '}' >> $$FILE; \
+	echo "Saved to $$FILE"
 
 stop:
 	minikube delete
