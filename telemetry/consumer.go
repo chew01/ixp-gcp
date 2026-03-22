@@ -36,11 +36,12 @@ type Consumer struct {
 	throughputMap atomixmap.Map[string, string]
 }
 
-func NewConsumer(ctx context.Context, kafkaBootstrap, topic string) (*Consumer, error) {
+func NewConsumer(ctx context.Context, kafkaBootstrap, topic string, dialer *kafka.Dialer) (*Consumer, error) {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{kafkaBootstrap},
 		Topic:   topic,
 		GroupID: "telemetry-service",
+		Dialer:  dialer,
 	})
 
 	flowStateMap, err := atomix.Map[string, string]("flow-state-map").

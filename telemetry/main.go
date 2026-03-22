@@ -24,9 +24,14 @@ func main() {
 		log.Fatal(err)
 	}
 
+	tlsCfg, err := newKafkaTLSConfig()
+	if err != nil {
+		log.Fatalf("Kafka TLS config: %v", err)
+	}
+
 	ctx := context.Background()
 
-	consumer, err := NewConsumer(ctx, kafkaBootstrap, scene.TelemetryKafkaTopic)
+	consumer, err := NewConsumer(ctx, kafkaBootstrap, scene.TelemetryKafkaTopic, kafkaDialer(tlsCfg))
 	if err != nil {
 		log.Fatalf("Failed to create consumer: %v", err)
 	}

@@ -27,6 +27,11 @@ func main() {
 		log.Fatal(err)
 	}
 
+	tlsCfg, err := newKafkaTLSConfig()
+	if err != nil {
+		log.Fatalf("Kafka TLS config: %v", err)
+	}
+
 	interval, err := time.ParseDuration(scene.AuctionInterval)
 	if err != nil {
 		log.Fatal(err)
@@ -37,6 +42,7 @@ func main() {
 		Topic:                  scene.AuctionResultKafkaTopic,
 		Balancer:               &kafka.LeastBytes{},
 		AllowAutoTopicCreation: true,
+		Transport:              kafkaTransport(tlsCfg),
 	}
 	defer writer.Close()
 

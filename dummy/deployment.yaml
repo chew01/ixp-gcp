@@ -24,11 +24,18 @@ spec:
           - name: scenario-volume
             mountPath: /etc/scenario
             readOnly: true
+          - name: kafka-tls
+            mountPath: /etc/kafka-tls
+            readOnly: true
 
       volumes:
         - name: scenario-volume
           configMap:
             name: test-scenario
+        - name: kafka-tls
+          secret:
+            secretName: kafka-tls
+            optional: true
 ---
 
 apiVersion: v1
