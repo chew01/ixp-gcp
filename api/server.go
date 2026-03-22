@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -13,17 +14,21 @@ import (
 
 	"github.com/chew01/ixp-gcp/shared"
 	localotel "github.com/chew01/ixp-gcp/shared/otel"
+	"github.com/chew01/ixp-gcp/shared/scenario"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 )
 
 var (
-	bidMetricsOnce    sync.Once
-	flowThroughput    metric.Float64ObservableGauge
-	flowDropRate      metric.Float64ObservableGauge
-	bidPriceHistogram metric.Int64Histogram
-	bidUnitHistogram  metric.Int64Histogram
+	bidMetricsOnce       sync.Once
+	flowThroughput       metric.Float64ObservableGauge
+	flowDropRate         metric.Float64ObservableGauge
+	flowDropKbps         metric.Float64ObservableGauge
+	flowEgressKbps       metric.Float64ObservableGauge
+	customerCreditsSpent metric.Float64ObservableGauge
+	bidPriceHistogram    metric.Int64Histogram
+	bidUnitHistogram     metric.Int64Histogram
 )
 
 // InitServerMetrics initializes the instruments using the Meter
@@ -32,24 +37,29 @@ func (s *Server) InitServerMetrics() {
 	bidMetricsOnce.Do(func() {
 		var err error
 
-		// OTel will call this automatically every 3 seconds (based on otel.go config).
-		callback := func(ctx context.Context, observer metric.Float64Observer) error {
-			// 1. Get all flow keys from Atomix (e.g., ["sw-1:1:10", "sw-1:2:20"])
+		// Callback for flow throughput metric
+		callback_refreshThroughput := func(ctx context.Context, observer metric.Float64Observer) error {
 			keys, err := s.fs.List(ctx)
 			if err != nil {
 				return err
 			}
 
-			for _, key := range keys {
-				// 2. Fetch the value for this specific flow
-				val, err := s.fs.Get(ctx, key)
+			for _, flowKey := range keys {
+				swID, ingress, egress, err := parseFlowKey(flowKey)
 				if err != nil {
-					continue // Skip if a specific flow fails
+					continue
 				}
 
-				// 3. Parse the key and value (using your existing logic)
-				swID, ingress, egress, _ := parseFlowKey(key)
-				byteCount, _ := strconv.ParseFloat(val, 64)
+				raw, err := s.fs.Get(ctx, flowKey)
+				if err != nil || raw == "" {
+					continue
+				}
+
+				metrics, err := parseFlowMetricsValue(raw)
+				if err != nil {
+					slog.ErrorContext(ctx, fmt.Sprintf("failed to parse flow metrics for %s: %v", flowKey, err))
+					continue
+				}
 
 				attrs := attribute.NewSet(
 					attribute.String("switch_id", swID),
@@ -57,26 +67,189 @@ func (s *Server) InitServerMetrics() {
 					attribute.Int("egress_port", egress),
 				)
 
-				// 4. Record the observation
-				observer.Observe(byteCount, metric.WithAttributeSet(attrs))
+				observer.Observe(metrics.ThroughputKbps, metric.WithAttributeSet(attrs))
 			}
 			return nil
 		}
 
-		// localotel.Meter is initialized in your otel-init.go
+		// Callback for flow drop rate metric
+		callback_refreshDropRate := func(ctx context.Context, observer metric.Float64Observer) error {
+			keys, err := s.fs.List(ctx)
+			if err != nil {
+				return err
+			}
+
+			for _, flowKey := range keys {
+				swID, ingress, egress, err := parseFlowKey(flowKey)
+				if err != nil {
+					continue
+				}
+
+				raw, err := s.fs.Get(ctx, flowKey)
+				if err != nil || raw == "" {
+					continue
+				}
+
+				metrics, err := parseFlowMetricsValue(raw)
+				if err != nil {
+					continue
+				}
+
+				attrs := attribute.NewSet(
+					attribute.String("switch_id", swID),
+					attribute.Int("ingress_port", ingress),
+					attribute.Int("egress_port", egress),
+				)
+
+				observer.Observe(metrics.DropRatePct, metric.WithAttributeSet(attrs))
+			}
+			return nil
+		}
+
+		// Callback for flow drop kbps metric
+		callback_refreshDropKbps := func(ctx context.Context, observer metric.Float64Observer) error {
+			keys, err := s.fs.List(ctx)
+			if err != nil {
+				return err
+			}
+
+			for _, flowKey := range keys {
+				swID, ingress, egress, err := parseFlowKey(flowKey)
+				if err != nil {
+					continue
+				}
+
+				raw, err := s.fs.Get(ctx, flowKey)
+				if err != nil || raw == "" {
+					continue
+				}
+
+				metrics, err := parseFlowMetricsValue(raw)
+				if err != nil {
+					continue
+				}
+
+				attrs := attribute.NewSet(
+					attribute.String("switch_id", swID),
+					attribute.Int("ingress_port", ingress),
+					attribute.Int("egress_port", egress),
+				)
+
+				observer.Observe(metrics.DropKbps, metric.WithAttributeSet(attrs))
+			}
+			return nil
+		}
+
+		// Callback for flow egress kbps metric
+		callback_refreshEgressKbps := func(ctx context.Context, observer metric.Float64Observer) error {
+			keys, err := s.fs.List(ctx)
+			if err != nil {
+				return err
+			}
+
+			for _, flowKey := range keys {
+				swID, ingress, egress, err := parseFlowKey(flowKey)
+				if err != nil {
+					continue
+				}
+
+				raw, err := s.fs.Get(ctx, flowKey)
+				if err != nil || raw == "" {
+					continue
+				}
+
+				metrics, err := parseFlowMetricsValue(raw)
+				if err != nil {
+					continue
+				}
+
+				attrs := attribute.NewSet(
+					attribute.String("switch_id", swID),
+					attribute.Int("ingress_port", ingress),
+					attribute.Int("egress_port", egress),
+				)
+
+				observer.Observe(metrics.EgressKbps, metric.WithAttributeSet(attrs))
+			}
+			return nil
+		}
+
+		// Callback for customer credits metric
+		callback_refreshCreditMetrics := func(ctx context.Context, observer metric.Float64Observer) error {
+			keys, err := s.cs.List(ctx)
+			if err != nil {
+				slog.ErrorContext(ctx, fmt.Sprintf("failed to list credits keys: %v", err))
+				return err
+			}
+
+			for _, customerID := range keys {
+				cred, err := s.cs.Get(ctx, customerID)
+				if err != nil {
+					continue
+				}
+
+				attrs := attribute.NewSet(
+					attribute.String("customer_id", customerID),
+				)
+
+				observer.Observe(float64(cred.TotalSpent), metric.WithAttributeSet(attrs))
+			}
+			return nil
+		}
+
+		// Create flow throughput gauge
 		flowThroughput, err = localotel.Meter.Float64ObservableGauge(
 			"ixp.flow.throughput",
 			metric.WithDescription("Flow throughput in Kbps"),
 			metric.WithUnit("kbps"),
-			metric.WithFloat64Callback(callback),
+			metric.WithFloat64Callback(callback_refreshThroughput),
 		)
+		if err != nil {
+			slog.Error("Failed to initialise flowThroughput metric", "error", err)
+		}
+
+		// Create flow drop rate gauge
 		flowDropRate, err = localotel.Meter.Float64ObservableGauge(
 			"ixp.flow.drop_rate",
 			metric.WithDescription("Flow packet drop rate as a percentage"),
 			metric.WithUnit("%"),
+			metric.WithFloat64Callback(callback_refreshDropRate),
 		)
 		if err != nil {
-			slog.Error("Failed to initialise flowThroughput and flowDropRate metrics", "error", err)
+			slog.Error("Failed to initialise flowDropRate metric", "error", err)
+		}
+
+		// Create flow drop kbps gauge
+		flowDropKbps, err = localotel.Meter.Float64ObservableGauge(
+			"ixp.flow.drop_kbps",
+			metric.WithDescription("Flow packet drop rate in Kbps"),
+			metric.WithUnit("kbps"),
+			metric.WithFloat64Callback(callback_refreshDropKbps),
+		)
+		if err != nil {
+			slog.Error("Failed to initialise flowDropKbps metric", "error", err)
+		}
+
+		// Create flow egress kbps gauge
+		flowEgressKbps, err = localotel.Meter.Float64ObservableGauge(
+			"ixp.flow.egress_kbps",
+			metric.WithDescription("Flow egress bandwidth in Kbps"),
+			metric.WithUnit("kbps"),
+			metric.WithFloat64Callback(callback_refreshEgressKbps),
+		)
+		if err != nil {
+			slog.Error("Failed to initialise flowEgressKbps metric", "error", err)
+		}
+
+		// Create customer credits spent gauge
+		customerCreditsSpent, err = localotel.Meter.Float64ObservableGauge(
+			"ixp.customer.credits_spent",
+			metric.WithDescription("Total credits spent by customer (accounting only)"),
+			metric.WithUnit("credits"),
+			metric.WithFloat64Callback(callback_refreshCreditMetrics),
+		)
+		if err != nil {
+			slog.Error("Failed to initialise customerCreditsSpent metric", "error", err)
 		}
 
 		// Initialize Bid Price Histogram
@@ -95,12 +268,31 @@ func (s *Server) InitServerMetrics() {
 		if err != nil {
 			slog.Error("Failed to initialize bid histograms", "error", err)
 		}
+
 	})
 }
 
 type Server struct {
-	fs FlowStore
-	bs BidStore
+	fs       FlowStore
+	bs       BidStore
+	cs       CreditsStore
+	hs       AuctionHistoryStore
+	scenario *scenario.Scenario
+}
+
+// parseFlowMetricsValue parses the stored string into FlowMetricsValue.
+// Backward compatible: if the value is a single number (old format), it is treated as throughput_kbps; other fields are 0.
+func parseFlowMetricsValue(raw string) (shared.FlowMetricsValue, error) {
+	var v shared.FlowMetricsValue
+	if err := json.Unmarshal([]byte(raw), &v); err == nil {
+		return v, nil
+	}
+	// Old format: single float (throughput only)
+	var kbps float64
+	if _, err := fmt.Sscanf(raw, "%f", &kbps); err != nil {
+		return shared.FlowMetricsValue{}, fmt.Errorf("invalid flow metrics format: %q", raw)
+	}
+	return shared.FlowMetricsValue{ThroughputKbps: kbps}, nil
 }
 
 // GET /flows?switch_id=sw-1&ingress_port=1&egress_port=10
@@ -113,6 +305,12 @@ func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	customerID := customerIDFromRequest(r)
+	if customerID == "" {
+		http.Error(w, "missing customer identity: set X-Customer-ID or Authorization: Bearer <customer_id>", http.StatusUnauthorized)
+		return
+	}
+
 	switchID, ingress, egress, err := parseFlowParams(r)
 	span.SetAttributes(
 		attribute.String("switchID", switchID),
@@ -122,6 +320,15 @@ func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	// Enforce that the requested ingress port belongs to the authenticated customer.
+	if s.scenario != nil {
+		owner, ok := scenario.CustomerForIngressPort(s.scenario, switchID, uint32(ingress))
+		if !ok || owner != customerID {
+			http.Error(w, "flow not owned by this customer", http.StatusForbidden)
+			return
+		}
 	}
 
 	flowKey := buildFlowKey(switchID, ingress, egress)
@@ -140,16 +347,40 @@ func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	metrics, err := parseFlowMetricsValue(value)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("error parsing flow metrics: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{flowKey: value})
+	json.NewEncoder(w).Encode(map[string]shared.FlowMetricsValue{flowKey: metrics})
 }
 
-// POST /bids
+// customerIDFromRequest returns the customer ID from X-Customer-ID or Authorization: Bearer <customer_id>. Empty if missing.
+func customerIDFromRequest(r *http.Request) string {
+	if id := r.Header.Get("X-Customer-ID"); id != "" {
+		return strings.TrimSpace(id)
+	}
+	auth := r.Header.Get("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimSpace(auth[7:])
+	}
+	return ""
+}
+
+// POST /bids — requires X-Customer-ID or Authorization: Bearer <customer_id>; validates ingress port ownership.
 func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 	ctx, span := localotel.Tracer.Start(r.Context(), "receive-bid")
 	defer span.End()
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	customerID := customerIDFromRequest(r)
+	if customerID == "" {
+		http.Error(w, "missing customer identity: set X-Customer-ID or Authorization: Bearer <customer_id>", http.StatusUnauthorized)
 		return
 	}
 
@@ -169,7 +400,34 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	if s.scenario != nil {
+		switchID := ""
+		if len(s.scenario.Switches) > 0 {
+			switchID = s.scenario.Switches[0].ID
+		}
+		if switchID != "" {
+			owner, ok := scenario.CustomerForIngressPort(s.scenario, switchID, uint32(*bid.IngressPort))
+			if !ok || owner != customerID {
+				http.Error(w, "ingress port not owned by this customer", http.StatusForbidden)
+				return
+			}
+		}
+	}
+
+	if err := s.bs.Put(ctx, bid, customerID); err != nil {
+		span.SetStatus(codes.Error, "bid-storing-failed")
+		span.RecordError(err)
+		msg := fmt.Sprintf("failed to store bid: %v", err)
+		slog.ErrorContext(ctx, msg, "error", err)
+		http.Error(w, "failed to store bid", http.StatusInternalServerError)
+		return
+	}
+
+	slog.DebugContext(ctx, fmt.Sprintf("bid stored for %s in=%d eg=%d", customerID, *bid.IngressPort, *bid.EgressPort))
+
 	attrs := metric.WithAttributes(
+		attribute.String("customer_id", customerID),
 		attribute.Int64("ingress_port", int64(*bid.IngressPort)),
 		attribute.Int64("egress_port", int64(*bid.EgressPort)),
 	)
@@ -177,61 +435,95 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 	// Record the price and the units requested
 	bidPriceHistogram.Record(ctx, int64(*bid.UnitPrice), attrs)
 	bidUnitHistogram.Record(ctx, int64(*bid.Units), attrs)
-	if err := s.bs.Put(ctx, bid); err != nil {
-		span.SetStatus(codes.Error, "bid-storing-failed")
-		span.RecordError(err)
-		slog.ErrorContext(ctx, "bid storing failed", "error", err)
-		http.Error(w, "failed to store bid", http.StatusInternalServerError)
-		return
-	}
 
 	w.WriteHeader(http.StatusAccepted)
 	w.Write([]byte("bid accepted"))
 }
 
-// GET /metrics — Prometheus scrape endpoint replaced with callback function by OpenTelemetry which pushes periodically to otel collector and promehteus scrape from otel collector
-// func (s *Server) getMetrics(w http.ResponseWriter, r *http.Request) {
-// 	s.refreshMetrics(r.Context())
-// 	promhttp.Handler().ServeHTTP(w, r)
-// }
+// GET /credits — returns total_spent and optionally starting_balance for the authenticated customer
+func (s *Server) getCredits(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
-// func (s *Server) refreshMetrics(ctx context.Context) {
-// 	keys, err := s.fs.List(ctx)
-// 	if err != nil {
-// 		log.Printf("failed to list flow keys: %v", err)
-// 		return
-// 	}
+	customerToken := customerIDFromRequest(r)
+	if customerToken == "" {
+		http.Error(w, "missing customer identity: set X-Customer-ID or Authorization: Bearer <customer_id>", http.StatusUnauthorized)
+		return
+	}
 
-// 	for _, flowKey := range keys {
-// 		switchID, ingress, egress, err := parseFlowKey(flowKey)
-// 		if err != nil {
-// 			log.Printf("failed to parse flow key: %v", err)
-// 			continue
-// 		}
+	cred, err := s.cs.Get(r.Context(), customerToken)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("error fetching credits: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cred)
+}
 
-// 		throughput, err := s.fs.Get(ctx, flowKey)
-// 		if err != nil || throughput == "" {
-// 			throughput = "0"
-// 		}
+// GET /auctions?egress_port=0 — returns auction history (clearing prices and own allocations) for the authenticated customer.
+func (s *Server) getAuctions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
-// 		var kbps float64
-// 		fmt.Sscanf(throughput, "%f", &kbps)
+	customerID := customerIDFromRequest(r)
+	if customerID == "" {
+		http.Error(w, "missing customer identity: set X-Customer-ID or Authorization: Bearer <customer_id>", http.StatusUnauthorized)
+		return
+	}
 
-// 		// labels := prometheus.Labels{
-// 		// 	"switch_id":    switchID,
-// 		// 	"ingress_port": fmt.Sprint(ingress),
-// 		// 	"egress_port":  fmt.Sprint(egress),
-// 		// }
+	var filterEgress uint64
+	if egressStr := r.URL.Query().Get("egress_port"); egressStr != "" {
+		v, err := strconv.ParseUint(egressStr, 10, 64)
+		if err != nil {
+			http.Error(w, "invalid egress_port: must be an integer", http.StatusBadRequest)
+			return
+		}
+		filterEgress = v
+	}
 
-// 		// flowThroughput.With(labels).Set(kbps)
-// 		attrs := metric.WithAttributes(
-// 			attribute.String("switch_id", switchID),
-// 			attribute.Int("ingress_port", ingress),
-// 			attribute.Int("egress_port", egress),
-// 		)
-// 		flowThroughput.Record(ctx, float64(kbps), attrs)
-// 	}
-// }
+	keys, err := s.hs.List(r.Context())
+	if err != nil {
+		http.Error(w, fmt.Sprintf("error listing auction history: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	var out []shared.AuctionHistoryRecord
+
+	for _, key := range keys {
+		raw, err := s.hs.Get(r.Context(), key)
+		if err != nil || raw == "" {
+			continue
+		}
+		var rec shared.AuctionHistoryRecord
+		if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+			log.Printf("failed to unmarshal auction history %s: %v", key, err)
+			continue
+		}
+		if filterEgress != 0 && rec.EgressPort != filterEgress {
+			continue
+		}
+
+		// Filter allocations so the caller only sees its own entries.
+		if len(rec.Allocations) > 0 {
+			var own []shared.AuctionCustomerAllocation
+			for _, alloc := range rec.Allocations {
+				if alloc.CustomerID == customerID {
+					own = append(own, alloc)
+				}
+			}
+			rec.Allocations = own
+		}
+
+		out = append(out, rec)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
 
 // ============================================================
 // Helpers

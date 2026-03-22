@@ -32,7 +32,6 @@ spec:
           - name: scenario-volume
             mountPath: "/etc/scenario"
             readOnly: true
-
       volumes:
         - name: scenario-volume
           configMap:

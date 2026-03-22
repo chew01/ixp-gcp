@@ -148,7 +148,18 @@ func (c *Consumer) setFlowState(ctx context.Context, key string, state FlowState
 }
 
 func (c *Consumer) publishMetrics(ctx context.Context, m FlowMetrics) {
-	c.throughputMap.Put(ctx, m.FlowKey, fmt.Sprintf("%.2f", m.IngressKbps))
+	val := shared.FlowMetricsValue{
+		ThroughputKbps: m.IngressKbps,
+		EgressKbps:     m.EgressKbps,
+		DropKbps:       m.DropKbps,
+		DropRatePct:    m.DropRate,
+	}
+	b, err := json.Marshal(val)
+	if err != nil {
+		log.Printf("failed to marshal flow metrics: %v", err)
+		return
+	}
+	c.throughputMap.Put(ctx, m.FlowKey, string(b))
 
 	log.Printf(
 		"[switch=%s] flow %s: ingress=%.2f Kbps egress=%.2f Kbps drop=%.2f Kbps (%.2f%%)",

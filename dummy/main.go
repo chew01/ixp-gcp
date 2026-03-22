@@ -65,7 +65,16 @@ func main() {
 	sw := NewDummySwitch(reader)
 
 	go producer.Run(ctx)
-	go bidder.Run(ctx)
+
+	// Dummy bidder is demo-only. It is disabled by default and can be enabled
+	// explicitly via ENABLE_DUMMY_BIDDER for legacy/demo scenarios.
+	if os.Getenv("ENABLE_DUMMY_BIDDER") == "true" || os.Getenv("ENABLE_DUMMY_BIDDER") == "1" {
+		log.Println("starting dummy bidder (ENABLE_DUMMY_BIDDER enabled)")
+		go bidder.Run(ctx)
+	} else {
+		log.Println("dummy bidder disabled; use customer agents instead")
+	}
+
 	sw.Run(ctx)
 }
 

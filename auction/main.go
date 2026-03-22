@@ -33,7 +33,7 @@ func main() {
 	defer span.End()
 	// Handle shutdown properly so nothing leaks.
 	defer func() {
-		err = errors.Join(err, otelShutdown(context.Background()))
+		err = errors.Join(err, otelShutdown(ctx))
 	}()
 
 	kafkaBootstrap := os.Getenv("KAFKA_BOOTSTRAP")

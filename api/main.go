@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 
 	localotel "github.com/chew01/ixp-gcp/shared/otel"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
+	"github.com/chew01/ixp-gcp/shared/scenario"
 )
 
 func main() {
@@ -36,15 +39,46 @@ func run() error {
 	}()
 
 	// 2. Initialize Stores (Incoming changes logic)
+	scenarioPath := os.Getenv("SCENARIO_PATH")
+	if scenarioPath == "" {
+		scenarioPath = "/etc/scenario/scenario.yaml"
+	}
+	scen, err := scenario.Load(scenarioPath)
+	if err != nil {
+		log.Fatalf("failed to load scenario: %v", err)
+	}
+
 	fs, err := NewAtomixFlowStore(ctx)
 	if err != nil {
 		return err
 	}
 	bs := NewAtomixBidStore()
+	cs, err := NewAtomixCreditsStore(ctx)
+	if err != nil {
+		log.Fatalf("failed to create credits store: %v", err)
+	}
+	hs, err := NewAtomixAuctionHistoryStore(ctx)
+	if err != nil {
+		log.Fatalf("failed to create auction history store: %v", err)
+	}
+	// Ensure every customer from the scenario has a credits entry (total_spent=0) so GET /credits and Prometheus show them from the start.
+	seen := make(map[string]bool)
+	for _, c := range scen.Customers {
+		if seen[c.ID] {
+			continue
+		}
+		seen[c.ID] = true
+		if err := cs.InitCustomerIfMissing(ctx, c.ID); err != nil {
+			log.Fatalf("failed to init credits for customer %s: %v", c.ID, err)
+		}
+	}
 
 	server := &Server{
-		fs: fs,
-		bs: bs,
+		fs:       fs,
+		bs:       bs,
+		cs:       cs,
+		hs:       hs,
+		scenario: scen,
 	}
 
 	server.InitServerMetrics()
@@ -53,6 +87,8 @@ func run() error {
 	appMux := http.NewServeMux()
 	appMux.HandleFunc("/flows", server.getFlows)
 	appMux.HandleFunc("/bids", server.postBid)
+	appMux.HandleFunc("/credits", server.getCredits)
+	appMux.HandleFunc("/auctions", server.getAuctions)
 
 	// Wrap with OTel instrumentation
 	handler := otelhttp.NewHandler(appMux, "api-gateway")

@@ -4,26 +4,34 @@
 ```mermaid
 sequenceDiagram
     autonumber
-    actor U as User
+    actor C as Customer Agent
     participant A as API Service
     participant D as Atomix
     participant R as Auction Runner
     participant K as Kafka
     participant S as Switch
 
-    U ->> A: POST /bid {p1,q1}
-    A ->> D: BidMap.Put(bid1)
-    U ->> A: POST /bid {p2,q2}
-    A ->> D: BidMap.Put(bid2)
-    U ->> A: POST /bid {p3,q3}
-    A ->> D: BidMap.Put(bid3)
+    C ->> A: POST /bids (X-Customer-ID, ingress, egress, units, unit_price)
+    A ->> D: BidMap.Put(units|price|customer_id)
+    Note over A: One bid per (ingress, egress)<br/>value encodes customer ID
+
     R ->> D: BidMap.List()
-    D -->> R: bid1, bid2, bid3
-    Note over R: Run Auction<br/>bid2 wins
+    D -->> R: bids with customer IDs
+    Note over R: Run auction<br/>compute allocations + clearing price
+
+    R ->> D: CreditsMap.Update(total_spent per customer)
+    R ->> D: AuctionHistoryMap.Put(interval, egress, clearing_price, per-customer allocations)
+
     R ->> K: Auction result
     S ->> K: Consume result
     K -->> S: Auction result
     Note over S: Configure switch
+
+    C ->> A: GET /credits (X-Customer-ID)
+    A -->> C: total_spent for that customer
+
+    C ->> A: GET /auctions?egress_port=0 (X-Customer-ID)
+    A -->> C: clearing prices + caller's own allocations
 ```
 
 ### Telemetry System

@@ -56,6 +56,7 @@ func RunReservationPriceAuction(intervalID string, egressPort uint64, capacity u
 				AllocatedUnits: bid.Units,
 				ClearingPrice:  clearingPrice,
 				Interval:       intervalID,
+				CustomerID:     bid.CustomerID,
 			})
 			if bid.Units >= remaining {
 				remaining = 0
@@ -86,6 +87,7 @@ func RunReservationPriceAuction(intervalID string, egressPort uint64, capacity u
 				AllocatedUnits: allocated,
 				ClearingPrice:  clearingPrice,
 				Interval:       intervalID,
+				CustomerID:     bid.CustomerID,
 			})
 		}
 	}

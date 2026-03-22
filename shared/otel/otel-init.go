@@ -21,9 +21,9 @@ func (c StringMapCarrier) Keys() []string        { /* not needed for inject */ r
 
 // Package-level OTel instruments for use across all files
 var (
-	Logger *slog.Logger
-	Tracer trace.Tracer
-	Meter  metric.Meter
+	Logger *slog.Logger = slog.Default()
+	Tracer trace.Tracer = otel.Tracer("ixp-default")
+	Meter  metric.Meter = otel.Meter("ixp-default")
 )
 
 // InitInstruments sets up the OTel-integrated logger, tracer, and meter.
