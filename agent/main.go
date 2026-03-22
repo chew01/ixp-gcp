@@ -59,6 +59,8 @@ func selectStrategy(name string) (strategy.Bidder, error) {
 	switch name {
 	case "conservative":
 		return strategy.Conservative{}, nil
+	case "demand_corrected":
+		return strategy.DemandCorrected{}, nil
 	default:
 		return nil, fmt.Errorf("unknown strategy %q", name)
 	}
