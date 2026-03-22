@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/chew01/ixp-gcp/agent/strategy"
 	"github.com/chew01/ixp-gcp/shared/scenario"
 )
 
@@ -36,3 +37,21 @@ func TestDeriveCustomerPorts(t *testing.T) {
 	}
 }
 
+func TestSelectStrategy(t *testing.T) {
+	t.Run("conservative returns Conservative", func(t *testing.T) {
+		s, err := selectStrategy("conservative")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, ok := s.(strategy.Conservative); !ok {
+			t.Errorf("expected strategy.Conservative, got %T", s)
+		}
+	})
+
+	t.Run("unknown strategy returns error", func(t *testing.T) {
+		_, err := selectStrategy("unknown")
+		if err == nil {
+			t.Fatal("expected error for unknown strategy, got nil")
+		}
+	})
+}

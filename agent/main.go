@@ -12,14 +12,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/chew01/ixp-gcp/agent/strategy"
 	"github.com/chew01/ixp-gcp/shared"
 	"github.com/chew01/ixp-gcp/shared/scenario"
 )
 
 type config struct {
-	CustomerID   string
-	APIBaseURL   string
-	ScenarioPath string
+	CustomerID    string
+	APIBaseURL    string
+	ScenarioPath  string
+	AgentStrategy string
 }
 
 type customerPorts struct {
@@ -41,17 +43,36 @@ func loadConfig() (config, error) {
 	if scPath == "" {
 		scPath = "/etc/scenario/scenario.yaml"
 	}
+	agentStrategy := os.Getenv("AGENT_STRATEGY")
+	if agentStrategy == "" {
+		agentStrategy = "conservative"
+	}
 	return config{
-		CustomerID:   customerID,
-		APIBaseURL:   apiBase,
-		ScenarioPath: scPath,
+		CustomerID:    customerID,
+		APIBaseURL:    apiBase,
+		ScenarioPath:  scPath,
+		AgentStrategy: agentStrategy,
 	}, nil
+}
+
+func selectStrategy(name string) (strategy.Bidder, error) {
+	switch name {
+	case "conservative":
+		return strategy.Conservative{}, nil
+	default:
+		return nil, fmt.Errorf("unknown strategy %q", name)
+	}
 }
 
 func main() {
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatalf("config error: %v", err)
+	}
+
+	strat, err := selectStrategy(cfg.AgentStrategy)
+	if err != nil {
+		log.Fatalf("strategy error: %v", err)
 	}
 
 	scene, err := scenario.Load(cfg.ScenarioPath)
@@ -80,10 +101,10 @@ func main() {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	log.Printf("customer agent starting for %s, interval=%s, api=%s", cfg.CustomerID, interval, cfg.APIBaseURL)
+	log.Printf("customer agent starting for %s, interval=%s, api=%s, strategy=%s", cfg.CustomerID, interval, cfg.APIBaseURL, cfg.AgentStrategy)
 
 	// Run immediately once, then on each tick.
-	if err := runOnce(ctx, client, cfg, scene, customerPorts); err != nil {
+	if err := runOnce(ctx, client, cfg, scene, customerPorts, strat); err != nil {
 		log.Printf("runOnce error: %v", err)
 	}
 
@@ -93,7 +114,7 @@ func main() {
 			log.Println("customer agent shutting down")
 			return
 		case <-ticker.C:
-			if err := runOnce(ctx, client, cfg, scene, customerPorts); err != nil {
+			if err := runOnce(ctx, client, cfg, scene, customerPorts, strat); err != nil {
 				log.Printf("runOnce error: %v", err)
 			}
 		}
@@ -137,7 +158,7 @@ func deriveCustomerPorts(scene *scenario.Scenario, customerID string) []customer
 	return out
 }
 
-func runOnce(ctx context.Context, client *http.Client, cfg config, scene *scenario.Scenario, ports []customerPorts) error {
+func runOnce(ctx context.Context, client *http.Client, cfg config, scene *scenario.Scenario, ports []customerPorts, strat strategy.Bidder) error {
 	log.Printf("running once for %s", cfg.CustomerID)
 	credits, err := fetchCredits(ctx, client, cfg)
 	if err != nil {
@@ -148,7 +169,7 @@ func runOnce(ctx context.Context, client *http.Client, cfg config, scene *scenar
 		for _, in := range cp.Ingress {
 			for _, eg := range cp.Egress {
 				log.Printf("placing bid for %s in=%d eg=%d", cp.SwitchID, in, eg)
-				if err := placeBidForFlow(ctx, client, cfg, scene, cp.SwitchID, in, eg, credits); err != nil {
+				if err := placeBidForFlow(ctx, client, cfg, scene, cp.SwitchID, in, eg, credits, strat); err != nil {
 					log.Printf("placeBidForFlow error for %s in=%d eg=%d: %v", cp.SwitchID, in, eg, err)
 				}
 			}
@@ -182,7 +203,7 @@ func fetchCredits(ctx context.Context, client *http.Client, cfg config) (shared.
 	return cred, nil
 }
 
-func placeBidForFlow(ctx context.Context, client *http.Client, cfg config, scene *scenario.Scenario, switchID string, ingress, egress uint32, credits shared.CustomerCredits) error {
+func placeBidForFlow(ctx context.Context, client *http.Client, cfg config, scene *scenario.Scenario, switchID string, ingress, egress uint32, credits shared.CustomerCredits, strat strategy.Bidder) error {
 	metrics, err := fetchFlowMetrics(ctx, client, cfg, switchID, ingress, egress)
 	if err != nil {
 		// If the flow is not found, skip silently.
@@ -195,23 +216,23 @@ func placeBidForFlow(ctx context.Context, client *http.Client, cfg config, scene
 
 	lastClearing := fetchLastClearingPrice(ctx, client, cfg, egress)
 
-	// Simple heuristic:
-	// - Units: 10% above current throughput, at least 1 kbps.
-	// - Price: max(reservation_price, last_clearing_price).
-	unitsF := metrics.ThroughputKbps * 1.1
-	if unitsF < 1 {
-		// If essentially no traffic and no drop, skip bidding.
-		if metrics.ThroughputKbps <= 0 && metrics.DropKbps <= 0 {
-			return nil
-		}
-		unitsF = 1
+	bidCtx := strategy.BidContext{
+		Scene:             scene,
+		CustomerID:        cfg.CustomerID,
+		SwitchID:          switchID,
+		IngressPort:       ingress,
+		EgressPort:        egress,
+		Metrics:           metrics,
+		Credits:           credits,
+		LastClearingPrice: lastClearing,
 	}
-	units := uint64(unitsF)
 
-	price := scene.ReservationPrice
-	if lastClearing > 0 && lastClearing > price {
-		price = lastClearing
+	units, priceU64, skip := strat.ComputeBid(bidCtx)
+	if skip {
+		return nil
 	}
+
+	price := int(priceU64)
 
 	// Construct bid request.
 	in64 := uint64(ingress)
