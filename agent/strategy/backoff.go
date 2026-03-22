@@ -1,13 +1,10 @@
 package strategy
 
-import (
-	"os"
-	"strconv"
-)
+import "strconv"
 
 // Backoff models a budget-constrained AS that deliberately cools the market
-// after repeated expensive rounds. Once the clearing price exceeds expensivePrice
-// for backoffThreshold consecutive rounds, it halves its bid price multiplier
+// after repeated expensive rounds. Once the clearing price exceeds ExpensivePrice
+// for BackoffThreshold consecutive rounds, it halves its bid price multiplier
 // (floored at 0.5). The multiplier resets to 1.0 after any cheap round.
 type Backoff struct {
 	consecutiveExpensive int // unexported: internal round counter
@@ -18,18 +15,17 @@ type Backoff struct {
 	CurrentMultiplier float64
 }
 
-// NewBackoff reads AGENT_BACKOFF_THRESHOLD and AGENT_EXPENSIVE_PRICE from the
-// environment and returns a configured Backoff. An expensivePrice of 0 (default)
-// means "auto: 2 × reservation_price" and is resolved each round from BidContext.
-func NewBackoff() *Backoff {
+// NewBackoff constructs a Backoff from strategy_params.
+// Recognised keys: "backoff_threshold" (default 3), "expensive_price" (default 0 = auto).
+func NewBackoff(params map[string]string) *Backoff {
 	threshold := 3
-	if v := os.Getenv("AGENT_BACKOFF_THRESHOLD"); v != "" {
+	if v := params["backoff_threshold"]; v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			threshold = n
 		}
 	}
 	expensivePrice := 0 // 0 = auto (2 × reservation_price)
-	if v := os.Getenv("AGENT_EXPENSIVE_PRICE"); v != "" {
+	if v := params["expensive_price"]; v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			expensivePrice = n
 		}

@@ -14,12 +14,19 @@ switches:
     egress_ports: [0]
     max_capacity: 100
 
+traffic:
+  pattern: random
+  rate_kbps: 10
+  spike_after_intervals: 5
+  spike_rate_kbps: 18
+
 customers:
   - id: as12345
     switch_id: sw-1
     ingress_ports: [1, 2, 3, 4, 5]
+    strategy: conservative
+
   - id: as67890
     switch_id: sw-1
     ingress_ports: [6, 7, 8, 9, 10]
-
-
+    strategy: conservative

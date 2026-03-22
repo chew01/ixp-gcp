@@ -1,9 +1,6 @@
 package strategy
 
-import (
-	"os"
-	"strconv"
-)
+import "strconv"
 
 // PriceInsensitive models an AS that values guaranteed bandwidth above cost
 // (e.g. latency-critical traffic). It always bids at a fixed multiple of the
@@ -12,11 +9,11 @@ type PriceInsensitive struct {
 	PriceMultiplier int
 }
 
-// NewPriceInsensitive reads AGENT_PRICE_MULTIPLIER from the environment
-// (default 10) and returns a configured PriceInsensitive.
-func NewPriceInsensitive() PriceInsensitive {
+// NewPriceInsensitive constructs a PriceInsensitive from strategy_params.
+// Recognised key: "price_multiplier" (default 10).
+func NewPriceInsensitive(params map[string]string) PriceInsensitive {
 	multiplier := 10
-	if v := os.Getenv("AGENT_PRICE_MULTIPLIER"); v != "" {
+	if v := params["price_multiplier"]; v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			multiplier = n
 		}

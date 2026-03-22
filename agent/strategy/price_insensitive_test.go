@@ -14,7 +14,7 @@ func TestPriceInsensitive_ComputeBid(t *testing.T) {
 	}
 
 	t.Run("zero traffic — skip", func(t *testing.T) {
-		s := strategy.NewPriceInsensitive()
+		s := strategy.NewPriceInsensitive(nil)
 		ctx := strategy.BidContext{
 			Scene:   scene,
 			Metrics: shared.FlowMetricsValue{ThroughputKbps: 0, DropKbps: 0},
@@ -26,8 +26,8 @@ func TestPriceInsensitive_ComputeBid(t *testing.T) {
 	})
 
 	t.Run("price is reservation * multiplier regardless of clearing history", func(t *testing.T) {
-		s := strategy.NewPriceInsensitive() // default multiplier 10
-		wantPrice := uint64(10 * 10)        // reservation(10) * multiplier(10) = 100
+		s := strategy.NewPriceInsensitive(nil) // default multiplier 10
+		wantPrice := uint64(10 * 10)           // reservation(10) * multiplier(10) = 100
 
 		cases := []int{0, 5, 50, 200}
 		for _, clearing := range cases {
@@ -47,7 +47,7 @@ func TestPriceInsensitive_ComputeBid(t *testing.T) {
 	})
 
 	t.Run("units are demand-aware (throughput + drop) * 1.05", func(t *testing.T) {
-		s := strategy.NewPriceInsensitive()
+		s := strategy.NewPriceInsensitive(nil)
 		ctx := strategy.BidContext{
 			Scene:   scene,
 			Metrics: shared.FlowMetricsValue{ThroughputKbps: 6, DropKbps: 4},
@@ -62,8 +62,8 @@ func TestPriceInsensitive_ComputeBid(t *testing.T) {
 		}
 	})
 
-	t.Run("custom multiplier via struct field", func(t *testing.T) {
-		s := strategy.PriceInsensitive{PriceMultiplier: 5}
+	t.Run("custom multiplier via strategy_params", func(t *testing.T) {
+		s := strategy.NewPriceInsensitive(map[string]string{"price_multiplier": "5"})
 		ctx := strategy.BidContext{
 			Scene:   scene,
 			Metrics: shared.FlowMetricsValue{ThroughputKbps: 5, DropKbps: 0},

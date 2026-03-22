@@ -18,10 +18,9 @@ import (
 )
 
 type config struct {
-	CustomerID    string
-	APIBaseURL    string
-	ScenarioPath  string
-	AgentStrategy string
+	CustomerID   string
+	APIBaseURL   string
+	ScenarioPath string
 }
 
 type customerPorts struct {
@@ -43,32 +42,42 @@ func loadConfig() (config, error) {
 	if scPath == "" {
 		scPath = "/etc/scenario/scenario.yaml"
 	}
-	agentStrategy := os.Getenv("AGENT_STRATEGY")
-	if agentStrategy == "" {
-		agentStrategy = "conservative"
-	}
 	return config{
-		CustomerID:    customerID,
-		APIBaseURL:    apiBase,
-		ScenarioPath:  scPath,
-		AgentStrategy: agentStrategy,
+		CustomerID:   customerID,
+		APIBaseURL:   apiBase,
+		ScenarioPath: scPath,
 	}, nil
 }
 
-func selectStrategy(name string) (strategy.Bidder, error) {
+// customerStrategy returns the strategy name and params for the given customer
+// from the scenario. Defaults to "conservative" with no params if not set.
+func customerStrategy(scene *scenario.Scenario, customerID string) (name string, params map[string]string) {
+	for _, c := range scene.Customers {
+		if c.ID == customerID {
+			name = c.Strategy
+			if name == "" {
+				name = "conservative"
+			}
+			return name, c.StrategyParams
+		}
+	}
+	return "conservative", nil
+}
+
+func selectStrategy(name string, params map[string]string) (strategy.Bidder, error) {
 	switch name {
 	case "conservative":
 		return strategy.Conservative{}, nil
 	case "demand_corrected":
 		return strategy.DemandCorrected{}, nil
 	case "price_insensitive":
-		return strategy.NewPriceInsensitive(), nil
+		return strategy.NewPriceInsensitive(params), nil
 	case "backoff":
-		return strategy.NewBackoff(), nil
+		return strategy.NewBackoff(params), nil
 	case "budget_aware":
 		return strategy.BudgetAware{}, nil
 	case "exploratory":
-		return strategy.NewExploratory(), nil
+		return strategy.NewExploratory(params), nil
 	default:
 		return nil, fmt.Errorf("unknown strategy %q", name)
 	}
@@ -80,14 +89,15 @@ func main() {
 		log.Fatalf("config error: %v", err)
 	}
 
-	strat, err := selectStrategy(cfg.AgentStrategy)
-	if err != nil {
-		log.Fatalf("strategy error: %v", err)
-	}
-
 	scene, err := scenario.Load(cfg.ScenarioPath)
 	if err != nil {
 		log.Fatalf("failed to load scenario: %v", err)
+	}
+
+	stratName, stratParams := customerStrategy(scene, cfg.CustomerID)
+	strat, err := selectStrategy(stratName, stratParams)
+	if err != nil {
+		log.Fatalf("strategy error: %v", err)
 	}
 
 	customerPorts := deriveCustomerPorts(scene, cfg.CustomerID)
@@ -111,7 +121,7 @@ func main() {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	log.Printf("customer agent starting for %s, interval=%s, api=%s, strategy=%s", cfg.CustomerID, interval, cfg.APIBaseURL, cfg.AgentStrategy)
+	log.Printf("customer agent starting for %s, interval=%s, api=%s, strategy=%s", cfg.CustomerID, interval, cfg.APIBaseURL, stratName)
 
 	// Run immediately once, then on each tick.
 	if err := runOnce(ctx, client, cfg, scene, customerPorts, strat); err != nil {

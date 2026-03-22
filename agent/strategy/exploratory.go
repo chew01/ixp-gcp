@@ -2,7 +2,6 @@ package strategy
 
 import (
 	"math"
-	"os"
 	"strconv"
 )
 
@@ -16,17 +15,17 @@ type Exploratory struct {
 	Epsilon     int     // fixed margin above EMA
 }
 
-// NewExploratory reads AGENT_EMA_ALPHA (default 0.3) and AGENT_EMA_EPSILON
-// (default 5) from the environment and returns a configured Exploratory.
-func NewExploratory() *Exploratory {
+// NewExploratory constructs an Exploratory from strategy_params.
+// Recognised keys: "ema_alpha" (default 0.3), "ema_epsilon" (default 5).
+func NewExploratory(params map[string]string) *Exploratory {
 	alpha := 0.3
-	if v := os.Getenv("AGENT_EMA_ALPHA"); v != "" {
+	if v := params["ema_alpha"]; v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 && f < 1 {
 			alpha = f
 		}
 	}
 	epsilon := 5
-	if v := os.Getenv("AGENT_EMA_EPSILON"); v != "" {
+	if v := params["ema_epsilon"]; v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			epsilon = n
 		}

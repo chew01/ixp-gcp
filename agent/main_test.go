@@ -39,7 +39,7 @@ func TestDeriveCustomerPorts(t *testing.T) {
 
 func TestSelectStrategy(t *testing.T) {
 	t.Run("conservative returns Conservative", func(t *testing.T) {
-		s, err := selectStrategy("conservative")
+		s, err := selectStrategy("conservative", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -49,9 +49,46 @@ func TestSelectStrategy(t *testing.T) {
 	})
 
 	t.Run("unknown strategy returns error", func(t *testing.T) {
-		_, err := selectStrategy("unknown")
+		_, err := selectStrategy("unknown", nil)
 		if err == nil {
 			t.Fatal("expected error for unknown strategy, got nil")
+		}
+	})
+}
+
+func TestCustomerStrategy(t *testing.T) {
+	scene := &scenario.Scenario{
+		Customers: []scenario.Customer{
+			{ID: "as12345", Strategy: "conservative"},
+			{ID: "as67890", Strategy: "price_insensitive", StrategyParams: map[string]string{"price_multiplier": "5"}},
+			{ID: "as11111"}, // no strategy set — should default to "conservative"
+		},
+	}
+
+	t.Run("explicit strategy returned", func(t *testing.T) {
+		name, params := customerStrategy(scene, "as67890")
+		if name != "price_insensitive" {
+			t.Errorf("name=%q, want price_insensitive", name)
+		}
+		if params["price_multiplier"] != "5" {
+			t.Errorf("price_multiplier=%q, want 5", params["price_multiplier"])
+		}
+	})
+
+	t.Run("empty strategy defaults to conservative", func(t *testing.T) {
+		name, _ := customerStrategy(scene, "as11111")
+		if name != "conservative" {
+			t.Errorf("name=%q, want conservative", name)
+		}
+	})
+
+	t.Run("unknown customer defaults to conservative", func(t *testing.T) {
+		name, params := customerStrategy(scene, "unknown")
+		if name != "conservative" {
+			t.Errorf("name=%q, want conservative", name)
+		}
+		if params != nil {
+			t.Errorf("params=%v, want nil", params)
 		}
 	})
 }
