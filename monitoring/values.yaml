@@ -4,3 +4,22 @@ grafana:
 prometheus:
   prometheusSpec:
     serviceMonitorSelectorNilUsesHelmValues: false  # scrape ALL ServiceMonitors in cluster
+
+# Global scrape interval for all targets not overridden by a ServiceMonitor.
+# The API gateway ServiceMonitor overrides this with interval: 1s.
+prometheusOperator:
+  prometheusDefaultBaseImageTag: ""
+
+# kube-prometheus-stack global defaults
+defaultRules:
+  create: true
+
+prometheus-node-exporter:
+  prometheus:
+    monitor:
+      interval: "10s"
+
+kube-state-metrics:
+  prometheus:
+    monitor:
+      interval: "10s"

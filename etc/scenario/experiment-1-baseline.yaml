@@ -1,0 +1,40 @@
+version: v1
+name: experiment-1-baseline
+
+# Experiment 1 — Baseline Agent Correctness
+#
+# Both agents run the conservative strategy against steady 9 kbps/flow traffic
+# (9 × 10 flows = 90 kbps, 90% of the 100 kbps egress capacity).
+# The 10% bid headroom (9 × 1.1 = 9.9 kbps/flow) is enough to win the full
+# fair share, so drops should fall to ~0 after the first 1–2 auction rounds.
+#
+# Run duration: 20 auction intervals = 10 minutes
+# Export:       make export-metrics   (run after the experiment)
+
+auction_result_kafka_topic: auction-results
+telemetry_kafka_topic: switch-telemetry
+
+reservation_price: 50
+auction_interval: 30s
+telemetry_interval: 1s
+
+switches:
+  - id: sw-1
+    ingress_ports: [1,2,3,4,5,6,7,8,9,10]
+    egress_ports: [0]
+    max_capacity: 100
+
+traffic:
+  pattern: steady
+  rate_kbps: 9
+
+customers:
+  - id: as12345
+    switch_id: sw-1
+    ingress_ports: [1, 2, 3, 4, 5]
+    strategy: conservative
+
+  - id: as67890
+    switch_id: sw-1
+    ingress_ports: [6, 7, 8, 9, 10]
+    strategy: conservative

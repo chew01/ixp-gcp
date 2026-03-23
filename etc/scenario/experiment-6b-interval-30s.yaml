@@ -1,0 +1,40 @@
+version: v1
+name: experiment-6b-interval-30s
+
+# Experiment 6 — Sensitivity to Auction Interval  (Run B: 30s — default)
+#
+# Baseline cadence. Same spike traffic as Runs A and C.
+# Serves as the middle point in the latency-cost trade-off analysis.
+#
+# Run duration: 10 minutes wall-clock (~20 auction rounds)
+# Export: make export-metrics
+
+auction_result_kafka_topic: auction-results
+telemetry_kafka_topic: switch-telemetry
+
+reservation_price: 50
+auction_interval: 30s
+telemetry_interval: 1s
+
+switches:
+  - id: sw-1
+    ingress_ports: [1,2,3,4,5,6,7,8,9,10]
+    egress_ports: [0]
+    max_capacity: 100
+
+traffic:
+  pattern: spike
+  rate_kbps: 8
+  spike_after_intervals: 5
+  spike_rate_kbps: 13
+
+customers:
+  - id: as12345
+    switch_id: sw-1
+    ingress_ports: [1, 2, 3, 4, 5]
+    strategy: demand_corrected
+
+  - id: as67890
+    switch_id: sw-1
+    ingress_ports: [6, 7, 8, 9, 10]
+    strategy: demand_corrected

@@ -48,9 +48,10 @@ func main() {
 	})
 	defer reader.Close()
 
+	allocations := NewAllocationTable()
 	bidder := NewDummyBidder("http://api-gateway/bids", scene)
-	producer := NewDummyProducer(writer, scene)
-	sw := NewDummySwitch(reader)
+	producer := NewDummyProducer(writer, scene, allocations)
+	sw := NewDummySwitch(reader, allocations)
 
 	ctx := context.Background()
 	go producer.Run(ctx)

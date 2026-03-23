@@ -78,6 +78,8 @@ func selectStrategy(name string, params map[string]string) (strategy.Bidder, err
 		return strategy.BudgetAware{}, nil
 	case "exploratory":
 		return strategy.NewExploratory(params), nil
+	case "q_learning":
+		return strategy.NewQLearning(params), nil
 	default:
 		return nil, fmt.Errorf("unknown strategy %q", name)
 	}

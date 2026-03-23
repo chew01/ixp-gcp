@@ -16,11 +16,12 @@ type Scenario struct {
 // Customer defines an AS provider that owns ingress ports on a switch.
 // The same customer ID may appear in multiple entries if they own ports on multiple switches.
 type Customer struct {
-	ID             string            `yaml:"id"`              // e.g. "as12345"
-	SwitchID       string            `yaml:"switch_id"`       // switch these ports belong to
-	IngressPorts   []uint32          `yaml:"ingress_ports"`   // ports this customer owns on the switch
-	Strategy       string            `yaml:"strategy"`        // bidding strategy name (default: "conservative")
-	StrategyParams map[string]string `yaml:"strategy_params"` // strategy-specific tuning parameters
+	ID              string            `yaml:"id"`               // e.g. "as12345"
+	SwitchID        string            `yaml:"switch_id"`        // switch these ports belong to
+	IngressPorts    []uint32          `yaml:"ingress_ports"`    // ports this customer owns on the switch
+	Strategy        string            `yaml:"strategy"`         // bidding strategy name (default: "conservative")
+	StrategyParams  map[string]string `yaml:"strategy_params"`  // strategy-specific tuning parameters
+	StartingBalance int               `yaml:"starting_balance"` // initial credit balance; 0 means unlimited
 }
 
 type Switch struct {

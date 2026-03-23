@@ -1,0 +1,48 @@
+version: v1
+name: experiment-2a-conservative-spike
+
+# Experiment 2 — Head-to-Head: Conservative vs Demand_corrected  (Run A: symmetric baseline)
+#
+# Both customers use conservative strategy during a spike from 8 → 13 kbps/flow
+# (80 → 130 kbps total, exceeding 100 kbps capacity).
+#
+# Conservative bids throughput × 1.1. Because throughput reports ingress (13 kbps)
+# regardless of congestion, the bid stabilises at 14 units/flow. Proportional
+# allocation gives each flow 14 × 100/140 = 10 kbps. Drops persist at ~23%
+# indefinitely — neither customer adapts.
+#
+# This run establishes the symmetric congestion baseline.
+# Compare against Run B where as67890 switches to demand_corrected.
+#
+# Run duration: 20 auction intervals = 10 minutes
+# Export: make export-metrics
+
+auction_result_kafka_topic: auction-results
+telemetry_kafka_topic: switch-telemetry
+
+reservation_price: 50
+auction_interval: 30s
+telemetry_interval: 1s
+
+switches:
+  - id: sw-1
+    ingress_ports: [1,2,3,4,5,6,7,8,9,10]
+    egress_ports: [0]
+    max_capacity: 100
+
+traffic:
+  pattern: spike
+  rate_kbps: 8
+  spike_after_intervals: 5
+  spike_rate_kbps: 13
+
+customers:
+  - id: as12345
+    switch_id: sw-1
+    ingress_ports: [1, 2, 3, 4, 5]
+    strategy: conservative
+
+  - id: as67890
+    switch_id: sw-1
+    ingress_ports: [6, 7, 8, 9, 10]
+    strategy: conservative

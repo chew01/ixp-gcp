@@ -1,0 +1,54 @@
+version: v1
+name: experiment-2b-demand-corrected-spike
+
+# Experiment 2 — Head-to-Head: Conservative vs Demand_corrected  (Run B: mixed)
+#
+# Identical traffic to Run A (spike 8 → 13 kbps/flow at auction interval 5).
+# as12345 keeps conservative; as67890 switches to demand_corrected.
+#
+# During congestion demand_corrected bids (throughput + drop) × 1.05, so it bids
+# more units than conservative (e.g. round 6: ~18 vs 14). Proportional allocation
+# favours the higher bidder:
+#   as67890 (dc):   18 × 100 / (5×18 + 5×14) = 11.25 kbps/flow  →  drop ≈ 1.75 kbps
+#   as12345 (con):  14 × 100 / 160           =  8.75 kbps/flow  →  drop ≈ 4.25 kbps
+#
+# In subsequent rounds demand_corrected's effective demand falls as its drops
+# shrink, and it converges toward full allocation. Conservative remains stuck.
+#
+# Expected observations vs Run A:
+#   - as67890 (demand_corrected) recovers faster and sustains lower drop rate
+#   - as12345 (conservative) drops MORE than in Run A because as67890 outbids it
+#   - Allocation per customer diverges visibly on the Grafana dashboard
+#
+# Run duration: 20 auction intervals = 10 minutes
+# Export: make export-metrics
+
+auction_result_kafka_topic: auction-results
+telemetry_kafka_topic: switch-telemetry
+
+reservation_price: 50
+auction_interval: 30s
+telemetry_interval: 1s
+
+switches:
+  - id: sw-1
+    ingress_ports: [1,2,3,4,5,6,7,8,9,10]
+    egress_ports: [0]
+    max_capacity: 100
+
+traffic:
+  pattern: spike
+  rate_kbps: 8
+  spike_after_intervals: 5
+  spike_rate_kbps: 13
+
+customers:
+  - id: as12345
+    switch_id: sw-1
+    ingress_ports: [1, 2, 3, 4, 5]
+    strategy: conservative
+
+  - id: as67890
+    switch_id: sw-1
+    ingress_ports: [6, 7, 8, 9, 10]
+    strategy: demand_corrected

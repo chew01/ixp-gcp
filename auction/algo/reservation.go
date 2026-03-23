@@ -65,7 +65,11 @@ func RunReservationPriceAuction(intervalID string, egressPort uint64, capacity u
 			}
 		} else if bid.UnitPrice == clearingPrice {
 			marginalBids = append(marginalBids, bid)
-			marginalDemand += bid.Units
+			// Virtual bid sets the price floor but must not dilute real bidders'
+			// proportional share — only count real demand in the denominator.
+			if !bid.IsVirtual {
+				marginalDemand += bid.Units
+			}
 		}
 	}
 

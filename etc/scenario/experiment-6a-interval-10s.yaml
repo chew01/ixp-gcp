@@ -1,0 +1,44 @@
+version: v1
+name: experiment-6a-interval-10s
+
+# Experiment 6 — Sensitivity to Auction Interval  (Run A: 10s — fast)
+#
+# Identical spike traffic to Experiment 2 but with a 10s auction interval.
+# The faster cadence means the system reacts to the spike in ~10s instead of ~30s,
+# but runs more auction rounds over the same 10-minute wall-clock window and
+# therefore accumulates higher total credit expenditure.
+#
+# Compare drop_duration, total_credits_spent, and num_rounds against Runs B and C.
+#
+# Run duration: 10 minutes wall-clock (~60 auction rounds)
+# Export: make export-metrics
+
+auction_result_kafka_topic: auction-results
+telemetry_kafka_topic: switch-telemetry
+
+reservation_price: 50
+auction_interval: 10s
+telemetry_interval: 1s
+
+switches:
+  - id: sw-1
+    ingress_ports: [1,2,3,4,5,6,7,8,9,10]
+    egress_ports: [0]
+    max_capacity: 100
+
+traffic:
+  pattern: spike
+  rate_kbps: 8
+  spike_after_intervals: 5
+  spike_rate_kbps: 13
+
+customers:
+  - id: as12345
+    switch_id: sw-1
+    ingress_ports: [1, 2, 3, 4, 5]
+    strategy: demand_corrected
+
+  - id: as67890
+    switch_id: sw-1
+    ingress_ports: [6, 7, 8, 9, 10]
+    strategy: demand_corrected

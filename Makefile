@@ -61,7 +61,9 @@ endif
 
 deploy-config:
 	@echo "==> Deploying Scenario Config..."
-	kubectl create configmap test-scenario --from-file=scenario.yaml=./etc/scenario/scenario.yaml
+	kubectl create configmap test-scenario \
+		--from-file=scenario.yaml=./etc/scenario/scenario.yaml \
+		-o yaml --dry-run=client | kubectl apply -f -
 
 deploy-dummy:
 	@echo "==> Deploying Dummy Producer..."
@@ -134,6 +136,76 @@ services: vendor deploy-api deploy-auction deploy-dummy deploy-telemetry deploy-
 all: infra services
 
 # ============================================================
+# Experiments — swap scenario and restart all pods
+# ============================================================
+# Active scenario file loaded into the test-scenario ConfigMap.
+# Override on the command line: make load-scenario SCENARIO=etc/scenario/experiment-1-baseline.yaml
+SCENARIO ?= etc/scenario/scenario.yaml
+
+.PHONY: load-scenario \
+        deploy-experiment-1 \
+        deploy-experiment-2a deploy-experiment-2b \
+        deploy-experiment-3 \
+        deploy-experiment-4a deploy-experiment-4b \
+        deploy-experiment-5 \
+        deploy-experiment-6a deploy-experiment-6b deploy-experiment-6c
+
+load-scenario:
+	@echo "==> Loading scenario: $(SCENARIO)"
+	kubectl create configmap test-scenario \
+		--from-file=scenario.yaml=$(SCENARIO) \
+		-o yaml --dry-run=client | kubectl apply -f -
+	kubectl rollout restart deployment/dummy-producer
+	kubectl rollout restart deployment/auction-runner
+	kubectl rollout restart deployment/telemetry-service
+	kubectl rollout restart deployment/api-gateway
+	kubectl rollout restart deployment/customer-agent-as12345
+	kubectl rollout restart deployment/customer-agent-as67890
+	@echo "==> Waiting for rollout..."
+	kubectl rollout status deployment/dummy-producer --timeout=90s
+	kubectl rollout status deployment/auction-runner --timeout=90s
+	kubectl rollout status deployment/api-gateway --timeout=90s
+	@echo "==> Scenario active: $(SCENARIO)"
+
+deploy-experiment-1:
+	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-1-baseline.yaml
+
+# Experiment 2 — Drop-Rate Algorithm vs. Fixed-Margin
+# Run A first, export metrics, reset, then Run B.
+deploy-experiment-2a:
+	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-2a-conservative-spike.yaml
+
+deploy-experiment-2b:
+	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-2b-demand-corrected-spike.yaml
+
+# Experiment 3 — Heterogeneous Strategies: Market Dynamics
+deploy-experiment-3:
+	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-3-heterogeneous.yaml
+
+# Experiment 4 — Budget Awareness and Credit Exhaustion
+# Run A first (conservative), export metrics, then Run B (budget_aware).
+deploy-experiment-4a:
+	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-4a-conservative-budget.yaml
+
+deploy-experiment-4b:
+	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-4b-budget-aware.yaml
+
+# Experiment 5 — Auction Convergence and Stability
+deploy-experiment-5:
+	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-5-convergence.yaml
+
+# Experiment 6 — Sensitivity to Auction Interval
+# Run each for 10 minutes, export metrics between runs.
+deploy-experiment-6a:
+	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-6a-interval-10s.yaml
+
+deploy-experiment-6b:
+	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-6b-interval-30s.yaml
+
+deploy-experiment-6c:
+	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-6c-interval-60s.yaml
+
+# ============================================================
 # Utilities
 # ============================================================
 .PHONY: vendor logs setup grafana-ui prometheus-ui stop test export-metrics
@@ -163,38 +235,38 @@ grafana-ui:
 		-o jsonpath='{.data.admin-password}' | base64 --decode)"
 
 prometheus-ui:
-	kubectl port-forward svc/monitoring-kube-promethe-prometheus 9090:9090 -n monitoring &
+	kubectl port-forward svc/monitoring-kube-prometheus-prometheus 9090:9090 -n monitoring &
 	@echo "Prometheus at http://localhost:9090"
 
 # Export key experiment metrics from Prometheus for the last hour.
 # Usage: make export-metrics [PROMETHEUS_URL=http://...] [SINCE=2h]
 # Output: data/experiment-<timestamp>.json
-SINCE ?= 1h
+SINCE ?= 1 hour
 export-metrics:
 	@mkdir -p data
 	@TS=$$(date +%Y%m%d-%H%M%S); FILE=data/experiment-$$TS.json; \
 	printf '{"clearing_price":' > $$FILE; \
 	curl -sG "$(PROMETHEUS_URL)/api/v1/query_range" \
 		--data-urlencode "query=ixp_auction_clearing_price" \
-		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s 2>/dev/null || date -v-$(SINCE) +%s)" \
+		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s)" \
 		--data-urlencode "end=$$(date +%s)" \
 		--data-urlencode "step=30s" >> $$FILE; \
 	printf ',"allocation_kbps":' >> $$FILE; \
 	curl -sG "$(PROMETHEUS_URL)/api/v1/query_range" \
 		--data-urlencode "query=ixp_customer_allocation_kbps" \
-		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s 2>/dev/null || date -v-$(SINCE) +%s)" \
+		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s)" \
 		--data-urlencode "end=$$(date +%s)" \
 		--data-urlencode "step=30s" >> $$FILE; \
 	printf ',"flow_drop_rate":' >> $$FILE; \
 	curl -sG "$(PROMETHEUS_URL)/api/v1/query_range" \
 		--data-urlencode "query=ixp_flow_drop_rate_percent" \
-		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s 2>/dev/null || date -v-$(SINCE) +%s)" \
+		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s)" \
 		--data-urlencode "end=$$(date +%s)" \
 		--data-urlencode "step=30s" >> $$FILE; \
 	printf ',"flow_throughput":' >> $$FILE; \
 	curl -sG "$(PROMETHEUS_URL)/api/v1/query_range" \
 		--data-urlencode "query=ixp_flow_throughput_kbps" \
-		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s 2>/dev/null || date -v-$(SINCE) +%s)" \
+		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s)" \
 		--data-urlencode "end=$$(date +%s)" \
 		--data-urlencode "step=30s" >> $$FILE; \
 	printf '}' >> $$FILE; \

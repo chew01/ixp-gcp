@@ -41,10 +41,24 @@ var (
 		Name: "ixp_customer_credits_spent_total",
 		Help: "Total credits spent by customer (accounting only)",
 	}, []string{"customer_id"})
+
+	auctionClearingPrice = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ixp_auction_clearing_price",
+		Help: "Latest auction clearing price per egress port",
+	}, []string{"egress_port"})
+
+	customerAllocationKbps = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ixp_customer_allocation_kbps",
+		Help: "Allocated bandwidth in Kbps per customer per egress port (latest auction round)",
+	}, []string{"customer_id", "egress_port"})
 )
 
 func init() {
-	prometheus.MustRegister(flowThroughput, flowEgressKbps, flowDropKbps, flowDropRate, customerCreditsSpent)
+	prometheus.MustRegister(
+		flowThroughput, flowEgressKbps, flowDropKbps, flowDropRate,
+		customerCreditsSpent,
+		auctionClearingPrice, customerAllocationKbps,
+	)
 }
 
 type Server struct {
@@ -271,6 +285,7 @@ func (s *Server) getAuctions(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getMetrics(w http.ResponseWriter, r *http.Request) {
 	s.refreshMetrics(r.Context())
 	s.refreshCreditsMetrics(r.Context())
+	s.refreshAuctionMetrics(r.Context())
 	promhttp.Handler().ServeHTTP(w, r)
 }
 
@@ -286,6 +301,54 @@ func (s *Server) refreshCreditsMetrics(ctx context.Context) {
 			continue
 		}
 		customerCreditsSpent.With(prometheus.Labels{"customer_id": customerID}).Set(float64(cred.TotalSpent))
+	}
+}
+
+// refreshAuctionMetrics updates ixp_auction_clearing_price and ixp_customer_allocation_kbps
+// from the latest AuctionHistoryRecord for each egress port in the auction-history store.
+func (s *Server) refreshAuctionMetrics(ctx context.Context) {
+	keys, err := s.hs.List(ctx)
+	if err != nil {
+		log.Printf("failed to list auction history keys: %v", err)
+		return
+	}
+
+	// Keep only the latest record per egress port (compared lexicographically by Interval).
+	latest := make(map[uint64]*shared.AuctionHistoryRecord)
+	for _, key := range keys {
+		raw, err := s.hs.Get(ctx, key)
+		if err != nil || raw == "" {
+			continue
+		}
+		var rec shared.AuctionHistoryRecord
+		if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+			log.Printf("failed to unmarshal auction history %s: %v", key, err)
+			continue
+		}
+		prev, ok := latest[rec.EgressPort]
+		if !ok || rec.Interval > prev.Interval {
+			r := rec
+			latest[rec.EgressPort] = &r
+		}
+	}
+
+	for egressPort, rec := range latest {
+		egressLabel := fmt.Sprint(egressPort)
+		auctionClearingPrice.With(prometheus.Labels{
+			"egress_port": egressLabel,
+		}).Set(float64(rec.ClearingPrice))
+
+		// Sum allocations per customer — a customer may own multiple ingress ports.
+		totals := make(map[string]float64)
+		for _, alloc := range rec.Allocations {
+			totals[alloc.CustomerID] += float64(alloc.Units)
+		}
+		for customerID, total := range totals {
+			customerAllocationKbps.With(prometheus.Labels{
+				"customer_id": customerID,
+				"egress_port": egressLabel,
+			}).Set(total)
+		}
 	}
 }
 

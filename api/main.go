@@ -41,7 +41,7 @@ func main() {
 			continue
 		}
 		seen[c.ID] = true
-		if err := cs.InitCustomerIfMissing(ctx, c.ID); err != nil {
+		if err := cs.InitCustomerIfMissing(ctx, c.ID, c.StartingBalance); err != nil {
 			log.Fatalf("failed to init credits for customer %s: %v", c.ID, err)
 		}
 	}

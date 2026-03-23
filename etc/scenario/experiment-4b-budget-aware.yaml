@@ -1,0 +1,47 @@
+version: v1
+name: experiment-4b-budget-aware
+
+# Experiment 4 — Budget Awareness and Credit Exhaustion  (Run B: budget_aware)
+#
+# Identical to Run A but both agents use budget_aware, which scales bid price
+# down as the remaining balance fraction falls:
+#   >75%  → full clearing price
+#   >50%  → 75% of clearing price
+#   >25%  → 50% of clearing price
+#   ≤25%  → reservation_price (minimum viable bid)
+#
+# Expected: credits deplete more slowly; agents sustain throughput longer while
+# spending a similar total amount. Exhaustion interval is later than Run A.
+#
+# Run duration: until exhaustion or 40 intervals (~20 minutes)
+# Export: make export-metrics
+
+auction_result_kafka_topic: auction-results
+telemetry_kafka_topic: switch-telemetry
+
+reservation_price: 50
+auction_interval: 30s
+telemetry_interval: 1s
+
+switches:
+  - id: sw-1
+    ingress_ports: [1,2,3,4,5,6,7,8,9,10]
+    egress_ports: [0]
+    max_capacity: 100
+
+traffic:
+  pattern: steady
+  rate_kbps: 11
+
+customers:
+  - id: as12345
+    switch_id: sw-1
+    ingress_ports: [1, 2, 3, 4, 5]
+    strategy: budget_aware
+    starting_balance: 1000
+
+  - id: as67890
+    switch_id: sw-1
+    ingress_ports: [6, 7, 8, 9, 10]
+    strategy: budget_aware
+    starting_balance: 1000
