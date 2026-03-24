@@ -31,11 +31,8 @@ import (
 var (
 	auctionMetricsOnce            sync.Once
 	auctionRunsCounter            metric.Int64Counter
-	auctionBidsAllocatedCounter   metric.Int64Counter
-	auctionBidsUnallocatedCounter metric.Int64Counter
-	auctionBidsFilteredCounter    metric.Int64Counter
 	auctionRequestedUnitsCounter  metric.Int64Counter
-	auctionClearingPriceHist      metric.Int64Histogram
+	auctionClearingPriceLatest    metric.Int64Gauge
 )
 
 // AuctionRunner owns the auction loop
@@ -67,49 +64,22 @@ func initAuctionMetrics() {
 			slog.Error("failed to initialize auctionRunsCounter", "error", err)
 		}
 
-		auctionBidsAllocatedCounter, err = localotel.Meter.Int64Counter(
-			"ixp.auction.bids.allocated",
-			metric.WithDescription("Total number of bids that received an allocation"),
-			metric.WithUnit("1"),
-		)
-		if err != nil {
-			slog.Error("failed to initialize auctionBidsAllocatedCounter", "error", err)
-		}
-
-		auctionBidsUnallocatedCounter, err = localotel.Meter.Int64Counter(
-			"ixp.auction.bids.unallocated",
-			metric.WithDescription("Total number of bids that received no allocation"),
-			metric.WithUnit("1"),
-		)
-		if err != nil {
-			slog.Error("failed to initialize auctionBidsUnallocatedCounter", "error", err)
-		}
-
-		auctionBidsFilteredCounter, err = localotel.Meter.Int64Counter(
-			"ixp.auction.bids.filtered",
-			metric.WithDescription("Total number of bids filtered out by reservation price"),
-			metric.WithUnit("1"),
-		)
-		if err != nil {
-			slog.Error("failed to initialize auctionBidsFilteredCounter", "error", err)
-		}
-
 		auctionRequestedUnitsCounter, err = localotel.Meter.Int64Counter(
 			"ixp.auction.units.requested",
-			metric.WithDescription("Total number of bandwidth units requested by eligible bids"),
+			metric.WithDescription("Total number of bandwidth units requested by submitted bids"),
 			metric.WithUnit("kbps"),
 		)
 		if err != nil {
 			slog.Error("failed to initialize auctionRequestedUnitsCounter", "error", err)
 		}
 
-		auctionClearingPriceHist, err = localotel.Meter.Int64Histogram(
-			"ixp.auction.clearing_price",
-			metric.WithDescription("Distribution of auction clearing prices"),
+		auctionClearingPriceLatest, err = localotel.Meter.Int64Gauge(
+			"ixp.auction.clearing_price.latest",
+			metric.WithDescription("Latest auction clearing price per egress port"),
 			metric.WithUnit("SGD"),
 		)
 		if err != nil {
-			slog.Error("failed to initialize auctionClearingPriceHist", "error", err)
+			slog.Error("failed to initialize auctionClearingPriceLatest", "error", err)
 		}
 
 	})
@@ -268,22 +238,16 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 
 	if capacity <= 0 || len(bids) == 0 {
 		if len(bids) > 0 {
-			totalBidsByIngress := make(map[uint64]int64)
-			unallocatedBidsByIngress := make(map[uint64]int64)
 			requestedUnitsByIngress := make(map[uint64]int64)
 			for _, bid := range bids {
-				totalBidsByIngress[bid.IngressPort]++
-				unallocatedBidsByIngress[bid.IngressPort]++
 				requestedUnitsByIngress[bid.IngressPort] += int64(bid.Units)
 			}
-			for ingressPort, total := range totalBidsByIngress {
+			for ingressPort, requested := range requestedUnitsByIngress {
 				bidAttrs := metric.WithAttributes(
 					attribute.Int64("egress_port", int64(egressPort)),
 					attribute.Int64("ingress_port", int64(ingressPort)),
 				)
-				auctionBidsUnallocatedCounter.Add(auctionCtx, unallocatedBidsByIngress[ingressPort], bidAttrs)
-				auctionRequestedUnitsCounter.Add(auctionCtx, requestedUnitsByIngress[ingressPort], bidAttrs)
-				_ = total
+				auctionRequestedUnitsCounter.Add(auctionCtx, requested, bidAttrs)
 			}
 		}
 		slog.DebugContext(auctionCtx, "No capacity or no bids, skipping auction")
@@ -303,26 +267,11 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 	reservationPrice := r.scenario.ReservationPrice
 	auctionSpan.SetAttributes(attribute.Int("auction.reservation_price", reservationPrice))
 
-	// Soft floor: only bids at or above reservation price participate in allocation.
-	eligibleBids := make([]models.Bid, 0, len(bids))
-	for _, bid := range bids {
-		if bid.UnitPrice >= reservationPrice {
-			eligibleBids = append(eligibleBids, bid)
-			continue
-		}
-		if span, ok := bidSpans[bid.IngressPort]; ok {
-			span.SetAttributes(
-				attribute.Bool("auction.filtered_by_reservation_price", true),
-				attribute.Int("auction.reservation_price", reservationPrice),
-			)
-		}
-	}
-
 	_, algoSpan := localotel.Tracer.Start(auctionCtx, "algo-execution")
 	allocations := make([]models.Allocation, 0)
 	clearingPrice := reservationPrice
-	if capacity > 0 && len(eligibleBids) > 0 {
-		allocations, clearingPrice = algo.RunUniformPriceAuction(intervalID, capacity, eligibleBids)
+	if capacity > 0 && len(bids) > 0 {
+		allocations, clearingPrice = algo.RunReservationPriceAuction(intervalID, egressPort, capacity, bids, reservationPrice)
 	}
 	algoSpan.SetAttributes(attribute.Int("clearing_price", clearingPrice))
 	algoSpan.End()
@@ -345,70 +294,20 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 			)
 		}
 	}
-	allocatedBidSet := make(map[uint64]struct{}, len(allocations))
 	requestedUnitsByIngress := make(map[uint64]int64)
-	totalBidsByIngress := make(map[uint64]int64)
-	filteredBidsByIngress := make(map[uint64]int64)
-	for _, bid := range eligibleBids {
+	for _, bid := range bids {
 		requestedUnitsByIngress[bid.IngressPort] += int64(bid.Units)
 	}
-	for _, bid := range bids {
-		totalBidsByIngress[bid.IngressPort]++
-		if bid.UnitPrice < reservationPrice {
-			filteredBidsByIngress[bid.IngressPort]++
-		}
-	}
-
-	allocatedUnitsByIngress := make(map[uint64]int64)
-	allocatedBidsByIngress := make(map[uint64]int64)
-	for _, alloc := range allocations {
-		allocatedUnitsByIngress[alloc.IngressPort] += int64(alloc.AllocatedUnits)
-		if alloc.AllocatedUnits > 0 {
-			allocatedBidSet[alloc.IngressPort] = struct{}{}
-			allocatedBidsByIngress[alloc.IngressPort]++
-		}
-	}
-
-	allocatedBids := len(allocatedBidSet)
-	unallocatedBids := len(eligibleBids) - allocatedBids
-	filteredBids := len(bids) - len(eligibleBids)
-	if unallocatedBids < 0 {
-		unallocatedBids = 0
-	}
-	if filteredBids < 0 {
-		filteredBids = 0
-	}
-
-	_ = allocatedBids
-	_ = unallocatedBids
-	_ = filteredBids
-	for ingressPort, total := range totalBidsByIngress {
-		_ = total
-		filtered := filteredBidsByIngress[ingressPort]
-		allocated := allocatedBidsByIngress[ingressPort]
-		eligible := totalBidsByIngress[ingressPort] - filtered
-		unallocated := eligible - allocated
-		if unallocated < 0 {
-			unallocated = 0
-		}
+	for ingressPort, requested := range requestedUnitsByIngress {
 		bidAttrs := metric.WithAttributes(
 			attribute.Int64("egress_port", int64(egressPort)),
 			attribute.Int64("ingress_port", int64(ingressPort)),
 		)
-		if allocated > 0 {
-			auctionBidsAllocatedCounter.Add(auctionCtx, allocated, bidAttrs)
-		}
-		if unallocated > 0 {
-			auctionBidsUnallocatedCounter.Add(auctionCtx, unallocated, bidAttrs)
-		}
-		if filtered > 0 {
-			auctionBidsFilteredCounter.Add(auctionCtx, filtered, bidAttrs)
-		}
-		if requested := requestedUnitsByIngress[ingressPort]; requested > 0 {
+		if requested > 0 {
 			auctionRequestedUnitsCounter.Add(auctionCtx, requested, bidAttrs)
 		}
 	}
-	auctionClearingPriceHist.Record(auctionCtx, int64(clearingPrice), attrs)
+	auctionClearingPriceLatest.Record(auctionCtx, int64(clearingPrice), attrs)
 
 	// End all bid spans
 	for _, span := range bidSpans {

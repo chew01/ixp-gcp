@@ -258,6 +258,9 @@ func (s *Server) InitServerMetrics() {
 			metric.WithDescription("Distribution of bid unit prices"),
 			metric.WithUnit("SGD"), // or whatever your currency is
 		)
+		if err != nil {
+			slog.Error("Failed to initialize bidPriceHistogram", "error", err)
+		}
 
 		// Initialize Bid Units Histogram (Bandwidth demand)
 		bidUnitHistogram, err = localotel.Meter.Int64Histogram(

@@ -80,58 +80,135 @@ make grafana-ui
 
 ### Dashboards in Grafana
 
-- **observability/ixp-flows.json** - Flow throughput, drop rates, egress utilization
-- **observability/ixp-auction.json** - Auction runs, bids, clearing prices, allocation ratios
-- **observability/ixp-bids.json** - Bid submissions and trends
+#### **Auction Metrics Dashboard** (`observability/ixp-auction.json`)
+- **Total Auctions** - Stat panel showing cumulative auction runs (`sum(ixp_auction_runs_total)`)
+- **Egress Port Latest Clearing Price** - Timeseries showing real-time clearing price per egress port (`max by (egress_port) (ixp_auction_clearing_price_latest_SGD)`)
+- **Ingress Demand by Port (Real-time Rate)** - Timeseries showing bandwidth demand per ingress port (`sum by (ingress_port) (increase(ixp_auction_units_requested_kbps_total[1m]))`)
+
+#### **Flow Metrics Dashboard** (`observability/ixp-flows.json`)
+- **Ingress 1-10 Throughput** - Stat panels for each ingress port's current throughput (kbps)
+- **Egress Port 0 Throughput** - Aggregated egress throughput
+- **Egress Kbps (Ingress 1)** - Egress traffic for specific ingress-egress pair
+- **Drop Kbps & Drop Rate %** - Shows packet drops and drop rate percentage for specific flows
+
+#### **Bids Dashboard** (`observability/ixp-bids.json`)
+- **Bid Submission Rate** - Timeseries showing bids per minute globally and per ingress port
+- **Total Bids Received** - Cumulative bid count stat (`sum(ixp_bid_price_SGD_count)`)
+- **Bandwidth Demand Quantiles** - Timeseries with p50, p90, p99 quantiles of bid bandwidth requests
 
 ---
 
 ## 3. Business Metrics Reference
 
+### Metric Naming Convention
+
+OpenTelemetry instruments are transformed to Prometheus metric names following this rule:
+- **Dots to underscores:** `ixp.auction.units.requested` → `ixp_auction_units_requested`
+- **Unit suffix:** `metric.WithUnit("kbps")` → `_kbps` in metric name
+- **Counter suffix:** `ixp_auction_units_requested_kbps` → `ixp_auction_units_requested_kbps_total`
+
 ### Flow Metrics (from Telemetry → API)
 
 | Metric | Unit | Labels | Example Query |
 |--------|------|--------|---|
-| `ixp_flow_throughput_kbps` | kbps | switch_id, ingress_port, egress_port | `sum(ixp_flow_throughput_kbps{switch_id="sw-1"})` |
-| `ixp_flow_drop_rate_percent` | % | switch_id, ingress_port, egress_port | `avg(ixp_flow_drop_rate_percent)` |
-| `ixp_flow_drop_kbps` | kbps | switch_id, ingress_port, egress_port | `sum(ixp_flow_drop_kbps)` |
-| `ixp_flow_egress_kbps` | kbps | switch_id, egress_port | `sum(ixp_flow_egress_kbps) by (egress_port)` |
+| `ixp_flow_throughput_kbps` | kbps | switch_id, ingress_port, egress_port | `ixp_flow_throughput_kbps{switch_id="sw-1",ingress_port="1"}` |
+| `ixp_flow_drop_rate_percent` | % | switch_id, ingress_port, egress_port | `ixp_flow_drop_rate_percent{switch_id="sw-1"}` |
+| `ixp_flow_drop_kbps` | kbps | switch_id, ingress_port, egress_port | `ixp_flow_drop_kbps{switch_id="sw-1"}` |
+| `ixp_flow_egress_kbps` | kbps | switch_id, egress_port | `sum by (egress_port) (ixp_flow_egress_kbps)` |
 
 ### Auction Metrics (from Auction Runner)
 
-#### Counters
+#### Counters (Cumulative)
 
 | Metric | Unit | Labels | Description |
 |--------|------|--------|---|
 | `ixp_auction_runs_total` | 1 | egress_port | Total auction runs executed |
-| `ixp_auction_bids_total` | 1 | egress_port | Total bids observed |
-| `ixp_auction_bids_allocated_total` | 1 | egress_port | Bids with allocation > 0 |
-| `ixp_auction_units_requested_kbps_total` | kbps | egress_port | Total bandwidth requested |
-| `ixp_auction_units_allocated_kbps_total` | kbps | egress_port | Total bandwidth allocated |
+| `ixp_auction_units_allocated_kbps_total` | kbps | egress_port | Total bandwidth allocated to winning bids |
+| `ixp_auction_units_requested_kbps_total` | kbps | egress_port | Total bandwidth requested by eligible bids (post-reservation filter) |
+| `ixp_auction_units_requested_served_bids_kbps_total` | kbps | egress_port | Bandwidth of eligible bids that won allocation |
+| `ixp_auction_units_submitted_kbps_total` | kbps | egress_port | Total bandwidth from all bids pre-filter (tracks filtering effect) |
+
+#### Gauge Metrics
+
+| Metric | Unit | Labels | Description |
+|--------|------|--------|---|
+| `ixp_auction_clearing_price_latest_SGD` | SGD | egress_port | Most recent clearing price for the port |
 
 #### Histograms
 
 | Metric | Unit | Labels | Description |
 |--------|------|--------|---|
-| `ixp_auction_clearing_price_SGD` | SGD | egress_port | Distribution of clearing prices per auction |
-| `ixp_auction_bid_allocation_ratio` | ratio | egress_port | Ratio of allocated units to requested units |
+| `ixp_auction_clearing_price_SGD_bucket` | SGD | egress_port, le | Distribution of clearing prices per auction (histogram buckets) |
+| `ixp_bid_price_SGD_bucket` | SGD | ingress_port, le | Distribution of bid prices (histogram buckets) |
+| `ixp_bid_units_kbps_bucket` | kbps | ingress_port, le | Distribution of bid bandwidth amounts (histogram buckets) |
+
+### Bid Metrics (from Dummy Producer)
+
+| Metric | Unit | Labels | Description |
+|--------|------|--------|---|
+| `ixp_bid_price_SGD_count` | 1 | ingress_port | Total bid count (includes all bid price observations) |
+| `ixp_bid_units_kbps_count` | 1 | ingress_port | Total observations of bid bandwidth amounts |
 
 #### Example Queries
 
 ```promql
-# Allocation success rate
-sum(rate(ixp_auction_bids_allocated_total[1m])) 
-/ sum(rate(ixp_auction_bids_total[1m]))
-
-# Allocation ratio (units)
+# Auction success rate (allocated bids / total bids submitted)
 sum(rate(ixp_auction_units_allocated_kbps_total[5m])) 
+/ sum(rate(ixp_auction_units_submitted_kbps_total[5m]))
+
+# Allocation effectiveness (served / requested)
+sum(rate(ixp_auction_units_requested_served_bids_kbps_total[5m])) 
 / sum(rate(ixp_auction_units_requested_kbps_total[5m]))
 
 # Median clearing price (last 5 minutes)
 histogram_quantile(0.5, sum by (le) (rate(ixp_auction_clearing_price_SGD_bucket[5m])))
 
-# Bid volume per egress port
-sum by (egress_port) (rate(ixp_auction_bids_total[1m]))
+# Bid volume per ingress port
+sum by (ingress_port) (rate(ixp_bid_price_SGD_count[1m]))
+
+# Bandwidth demand (p50, p90, p99 quantiles)
+histogram_quantile(0.50, sum by (le) (rate(ixp_bid_units_kbps_bucket[5m])))
+histogram_quantile(0.90, sum by (le) (rate(ixp_bid_units_kbps_bucket[5m])))
+histogram_quantile(0.99, sum by (le) (rate(ixp_bid_units_kbps_bucket[5m])))
+```
+
+---
+
+## 4. OpenTelemetry Collector Configuration
+
+### Overview
+
+The OpenTelemetry Collector is deployed as the central hub for telemetry collection. All application services export metrics, traces, and logs to the collector via OTLP (OpenTelemetry Protocol).
+
+### Receiver Configuration
+
+The collector listens on:
+- **OTLP gRPC:** `0.0.0.0:4317` - Primary receiver for OTLP metrics, traces, and logs
+- **OTLP HTTP:** `0.0.0.0:4318` - Alternative HTTP endpoint for OTLP data
+- **Prometheus:** `0.0.0.0:8889` - Custom endpoint for Prometheus scraping (exposes collected metrics)
+
+### Export Configuration
+
+```
+Services (OTLP gRPC:4317)
+    ↓
+OTEL Collector (Processors: batch, memory limiting)
+    ├→ Prometheus Exporter (endpoint :8889) → Scraped by Prometheus
+    ├→ Jaeger Exporter (OTLP) → jaeger.observability.svc.cluster.local:4317
+    └→ Loki Exporter (OTLP HTTP) → loki.observability.svc.cluster.local:3100/otlp
+```
+
+### Important Configuration Notes
+
+- **Namespace:** The Prometheus exporter does NOT include a namespace prefix. Since instrument names already have `ixp.` prefix (e.g., `ixp.auction.units.requested`), this avoids the double prefix problem.
+- **Processors:** Batch processor configured with 10s timeout and 1024 send batch size for efficient telemetry forwarding.
+- **Labels:** Const label `environment: development` added to all metrics.
+
+### Service DNS Names
+
+When configuring OTEL_EXPORTER_OTLP_ENDPOINT in application deployments, use:
+```
+otel-collector-opentelemetry-collector.observability.svc.cluster.local:4317
 ```
 
 ---

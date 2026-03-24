@@ -91,73 +91,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Median clearing price across all egress ports",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          },
-          "unit": "currencySGD"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 3,
-        "x": 3,
-        "y": 0
-      },
-      "id": 12,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.4.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(ixp_auction_clearing_price_SGD_bucket[1m])))",
-          "legendFormat": "Median Price",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Avg Clearing Price",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "Clearing price per egress port over time",
+      "description": "Latest clearing price per egress port",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -213,8 +147,8 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 18,
-        "x": 6,
+        "w": 21,
+        "x": 3,
         "y": 0
       },
       "id": 14,
@@ -243,13 +177,13 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.5, sum by (egress_port, le) (rate(ixp_auction_clearing_price_SGD_bucket[1m])))",
-          "legendFormat": "Egress {{egress_port}} (P50)",
+          "expr": "max by (egress_port) (ixp_auction_clearing_price_latest_SGD)",
+          "legendFormat": "Egress {{egress_port}} (Latest)",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Egress Port Clearing Prices",
+      "title": "Egress Port Latest Clearing Price",
       "type": "timeseries"
     },
     {
