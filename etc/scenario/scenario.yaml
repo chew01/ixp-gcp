@@ -1,5 +1,23 @@
 version: v1
-name: 10i1e
+name: experiment-4b-budget-aware
+
+# Experiment 4 — Budget Awareness and Credit Exhaustion  (Run B: budget_aware)
+#
+# Both agents use budget_aware with a finite starting_balance of 5000 credits
+# (identical to Run A for a fair comparison — only strategy changes).
+#
+# budget_aware bids EMA + epsilon(5) when balance > 75%, lifting clearing above
+# reservation_price after ~8 warm-up rounds. As each agent's balance falls, bids
+# step down through tiers (75% → 50% of EMA → reservation_price), reducing
+# allocation gradually rather than collapsing all at once.
+#
+# Expected vs Run A:
+#   - Clearing rises above reservation during the well-funded phase.
+#   - Credits deplete more slowly once agents enter lower tiers.
+#   - Throughput degrades gradually; no abrupt exhaustion cliff.
+#
+# Run duration: until exhaustion or 40 intervals (~20 minutes)
+# Export: make export-metrics
 
 auction_result_kafka_topic: auction-results
 telemetry_kafka_topic: switch-telemetry
@@ -15,18 +33,18 @@ switches:
     max_capacity: 100
 
 traffic:
-  pattern: random
-  rate_kbps: 10
-  spike_after_intervals: 5
-  spike_rate_kbps: 18
+  pattern: steady
+  rate_kbps: 11
 
 customers:
   - id: as12345
     switch_id: sw-1
     ingress_ports: [1, 2, 3, 4, 5]
-    strategy: conservative
+    strategy: budget_aware
+    starting_balance: 50000
 
   - id: as67890
     switch_id: sw-1
     ingress_ports: [6, 7, 8, 9, 10]
-    strategy: conservative
+    strategy: budget_aware
+    starting_balance: 50000

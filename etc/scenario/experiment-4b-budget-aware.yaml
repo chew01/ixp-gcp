@@ -3,15 +3,18 @@ name: experiment-4b-budget-aware
 
 # Experiment 4 — Budget Awareness and Credit Exhaustion  (Run B: budget_aware)
 #
-# Identical to Run A but both agents use budget_aware, which scales bid price
-# down as the remaining balance fraction falls:
-#   >75%  → full clearing price
-#   >50%  → 75% of clearing price
-#   >25%  → 50% of clearing price
-#   ≤25%  → reservation_price (minimum viable bid)
+# Both agents use budget_aware with a finite starting_balance of 5000 credits
+# (identical to Run A for a fair comparison — only strategy changes).
 #
-# Expected: credits deplete more slowly; agents sustain throughput longer while
-# spending a similar total amount. Exhaustion interval is later than Run A.
+# budget_aware bids EMA + epsilon(5) when balance > 75%, lifting clearing above
+# reservation_price after ~8 warm-up rounds. As each agent's balance falls, bids
+# step down through tiers (75% → 50% of EMA → reservation_price), reducing
+# allocation gradually rather than collapsing all at once.
+#
+# Expected vs Run A:
+#   - Clearing rises above reservation during the well-funded phase.
+#   - Credits deplete more slowly once agents enter lower tiers.
+#   - Throughput degrades gradually; no abrupt exhaustion cliff.
 #
 # Run duration: until exhaustion or 40 intervals (~20 minutes)
 # Export: make export-metrics
@@ -38,10 +41,10 @@ customers:
     switch_id: sw-1
     ingress_ports: [1, 2, 3, 4, 5]
     strategy: budget_aware
-    starting_balance: 1000
+    starting_balance: 5000
 
   - id: as67890
     switch_id: sw-1
     ingress_ports: [6, 7, 8, 9, 10]
     strategy: budget_aware
-    starting_balance: 1000
+    starting_balance: 5000

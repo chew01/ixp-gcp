@@ -75,7 +75,7 @@ func selectStrategy(name string, params map[string]string) (strategy.Bidder, err
 	case "backoff":
 		return strategy.NewBackoff(params), nil
 	case "budget_aware":
-		return strategy.BudgetAware{}, nil
+		return strategy.NewBudgetAware(params), nil
 	case "exploratory":
 		return strategy.NewExploratory(params), nil
 	case "q_learning":
