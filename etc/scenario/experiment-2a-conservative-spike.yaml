@@ -6,10 +6,14 @@ name: experiment-2a-conservative-spike
 # Both customers use conservative strategy during a spike from 8 → 13 kbps/flow
 # (80 → 130 kbps total, exceeding 100 kbps capacity).
 #
-# Conservative bids throughput × 1.1. Because throughput reports ingress (13 kbps)
-# regardless of congestion, the bid stabilises at 14 units/flow. Proportional
-# allocation gives each flow 14 × 100/140 = 10 kbps. Drops persist at ~23%
-# indefinitely — neither customer adapts.
+# After the spike the switch has 100 kbps egress capacity shared across 10 flows
+# of 13 kbps demand (130 kbps total). The simulator enforces best-effort semantics:
+# traffic above a flow's allocation is forwarded from spare capacity rather than
+# dropped unconditionally. Conservative bids throughput × 1.1 ≈ 14 units/flow.
+# Proportional allocation gives each flow ~10 kbps guaranteed. The remaining
+# capacity (100 − 10×10 = 0 kbps spare when all flows are at full demand) means
+# there is no best-effort headroom and drops persist at ~23% indefinitely —
+# neither customer adapts because conservative never accounts for dropped traffic.
 #
 # This run establishes the symmetric congestion baseline.
 # Compare against Run B where as67890 switches to demand_corrected.

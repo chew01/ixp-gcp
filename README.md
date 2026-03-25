@@ -142,7 +142,7 @@ Saves `data/experiment-<timestamp>.json` with clearing price, per-customer alloc
 | Experiment | Scenario file | What to observe |
 |------------|--------------|-----------------|
 | 1 — Baseline | `experiment-1-baseline.yaml` | Drop rate falls to ~0 after 1–2 intervals; clearing price stable at 50; credits symmetric |
-| 2a — Conservative spike (symmetric) | `experiment-2a-conservative-spike.yaml` | Spike at interval 5; both customers lock at 10 kbps allocation with ~23% drops; never recovers |
+| 2a — Conservative spike (symmetric) | `experiment-2a-conservative-spike.yaml` | Spike at interval 5; 130 kbps demand fills 100 kbps capacity leaving no spare best-effort headroom; drops persist at ~23% indefinitely because conservative never bids for dropped traffic |
 | 2b — Conservative vs demand_corrected spike | `experiment-2b-demand-corrected-spike.yaml` | After spike, `as67890` (demand_corrected) wins more allocation than `as12345` (conservative); allocation lines diverge |
 | 3 — Heterogeneous (price_insensitive) | `experiment-3-heterogeneous.yaml` | `as67890` (price_insensitive) gets full allocation; `as12345` (conservative) absorbs all drops; clearing price stays at 50 |
 | 4a — Conservative with finite budget | `experiment-4a-conservative-budget.yaml` | Credits drain fast (~2 rounds); abrupt throughput cliff once balance exhausted |
