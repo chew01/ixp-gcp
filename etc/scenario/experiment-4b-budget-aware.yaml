@@ -42,9 +42,11 @@ customers:
     ingress_ports: [1, 2, 3, 4, 5]
     strategy: budget_aware
     starting_balance: 5000
+    valuation_per_unit: 500
 
   - id: as67890
     switch_id: sw-1
     ingress_ports: [6, 7, 8, 9, 10]
     strategy: budget_aware
     starting_balance: 5000
+    valuation_per_unit: 500

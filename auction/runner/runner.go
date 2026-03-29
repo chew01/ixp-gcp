@@ -139,6 +139,11 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 		log.Printf("Error updating credits: %v", err)
 	}
 
+	// Accumulate utility: (valuation_per_unit - clearing_price) * allocated_units per customer.
+	if err := r.updateUtility(ctx, allocations, clearingPrice); err != nil {
+		log.Printf("Error updating utility: %v", err)
+	}
+
 	// Store auction history, including clearing price and per-customer allocations.
 	if err := r.storeAuctionHistory(ctx, intervalID, egressPort, clearingPrice, allocations); err != nil {
 		log.Printf("Error storing auction history: %v", err)
@@ -211,6 +216,56 @@ func (r *AuctionRunner) updateCredits(ctx context.Context, allocations []models.
 			return fmt.Errorf("update credits for %s: %w", customerID, err)
 		}
 		log.Printf("[credits] %s spent %d (total %d)", customerID, amount, cred.TotalSpent)
+	}
+	return nil
+}
+
+// valuationForCustomer looks up the ValuationPerUnit for a customer in the scenario.
+// Returns 0 if not found (will result in zero or negative utility, which is a warning sign).
+func (r *AuctionRunner) valuationForCustomer(customerID string) int {
+	for _, c := range r.scenario.Customers {
+		if c.ID == customerID {
+			return c.ValuationPerUnit
+		}
+	}
+	return 0
+}
+
+// updateUtility accumulates (valuation_per_unit - clearing_price) * allocated_units
+// per customer into the utility-map Atomix store. Values can be negative when
+// clearing_price > valuation (deliberate low-valuation experiments).
+func (r *AuctionRunner) updateUtility(ctx context.Context, allocations []models.Allocation, clearingPrice int) error {
+	utilityByCustomer := make(map[string]int)
+	for _, alloc := range allocations {
+		if alloc.CustomerID == "" {
+			continue
+		}
+		valuation := r.valuationForCustomer(alloc.CustomerID)
+		utility := (valuation - clearingPrice) * int(alloc.AllocatedUnits)
+		utilityByCustomer[alloc.CustomerID] += utility
+	}
+	if len(utilityByCustomer) == 0 {
+		return nil
+	}
+
+	utilityMap, err := atomix.Map[string, string]("utility-map").
+		Codec(generic.Scalar[string]()).
+		Get(ctx)
+	if err != nil {
+		return fmt.Errorf("get utility map: %w", err)
+	}
+
+	for customerID, utility := range utilityByCustomer {
+		entry, err := utilityMap.Get(ctx, customerID)
+		var current int
+		if err == nil && entry.Value != "" {
+			current, _ = strconv.Atoi(entry.Value)
+		}
+		current += utility
+		if _, err := utilityMap.Put(ctx, customerID, strconv.Itoa(current)); err != nil {
+			return fmt.Errorf("update utility for %s: %w", customerID, err)
+		}
+		log.Printf("[utility] %s earned %d (total %d)", customerID, utility, current)
 	}
 	return nil
 }

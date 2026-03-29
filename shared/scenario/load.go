@@ -2,6 +2,7 @@ package scenario
 
 import (
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/goccy/go-yaml"
@@ -26,7 +27,25 @@ func Load(path string) (*Scenario, error) {
 		return nil, err
 	}
 
+	applyValuationDefaults(&s)
+
 	return &s, nil
+}
+
+// applyValuationDefaults sets ValuationPerUnit to 10 × ReservationPrice for any
+// customer that omits the field, preserving backward compatibility. It also warns
+// when the configured value is below ReservationPrice, which would guarantee
+// negative utility on every round.
+func applyValuationDefaults(s *Scenario) {
+	for i := range s.Customers {
+		if s.Customers[i].ValuationPerUnit <= 0 {
+			s.Customers[i].ValuationPerUnit = 10 * s.ReservationPrice
+		}
+		if s.Customers[i].ValuationPerUnit < s.ReservationPrice {
+			log.Printf("warning: customer %s valuation_per_unit (%d) is below reservation_price (%d); utility will be negative every round",
+				s.Customers[i].ID, s.Customers[i].ValuationPerUnit, s.ReservationPrice)
+		}
+	}
 }
 
 // validateCustomers ensures every ingress port (across all switches) is assigned to

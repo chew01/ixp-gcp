@@ -7,14 +7,16 @@ import (
 
 // BidContext bundles all information a strategy needs for one (ingress, egress) pair.
 type BidContext struct {
-	Scene             *scenario.Scenario
-	CustomerID        string
-	SwitchID          string
-	IngressPort       uint32
-	EgressPort        uint32
-	Metrics           shared.FlowMetricsValue
-	Credits           shared.CustomerCredits
-	LastClearingPrice int
+	Scene              *scenario.Scenario
+	CustomerID         string
+	SwitchID           string
+	IngressPort        uint32
+	EgressPort         uint32
+	Metrics            shared.FlowMetricsValue
+	Credits            shared.CustomerCredits
+	LastClearingPrice  int
+	ValuationPerUnit   int    // from scenario customer config; used by valuation_based and utility calc
+	LastAllocatedUnits uint64 // units allocated in the most recent auction round (used for utility-aligned reward)
 }
 
 // Bidder computes the bid quantity and price for a single flow.

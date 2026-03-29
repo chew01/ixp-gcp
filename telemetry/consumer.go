@@ -88,6 +88,7 @@ func (c *Consumer) Run(ctx context.Context) {
 }
 
 func (c *Consumer) handleMessage(ctx context.Context, msg kafka.Message) error {
+	log.Printf("Received message: %s", string(msg.Value))
 	var record shared.TelemetryRecord
 	if err := json.Unmarshal(msg.Value, &record); err != nil {
 		return fmt.Errorf("failed to parse JSON: %w", err)

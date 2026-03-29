@@ -51,6 +51,11 @@ var (
 		Name: "ixp_customer_allocation_kbps",
 		Help: "Allocated bandwidth in Kbps per customer per egress port (latest auction round)",
 	}, []string{"customer_id", "egress_port"})
+
+	agentUtilityTotal = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ixp_agent_utility_total",
+		Help: "Cumulative agent utility across all rounds: sum of (valuation_per_unit - clearing_price) * allocated_units",
+	}, []string{"customer_id"})
 )
 
 func init() {
@@ -58,6 +63,7 @@ func init() {
 		flowThroughput, flowEgressKbps, flowDropKbps, flowDropRate,
 		customerCreditsSpent,
 		auctionClearingPrice, customerAllocationKbps,
+		agentUtilityTotal,
 	)
 }
 
@@ -66,6 +72,7 @@ type Server struct {
 	bs       BidStore
 	cs       CreditsStore
 	hs       AuctionHistoryStore
+	us       UtilityStore
 	scenario *scenario.Scenario
 }
 
@@ -286,7 +293,27 @@ func (s *Server) getMetrics(w http.ResponseWriter, r *http.Request) {
 	s.refreshMetrics(r.Context())
 	s.refreshCreditsMetrics(r.Context())
 	s.refreshAuctionMetrics(r.Context())
+	s.refreshUtilityMetrics(r.Context())
 	promhttp.Handler().ServeHTTP(w, r)
+}
+
+// refreshUtilityMetrics updates ixp_agent_utility_total from the utility-map store.
+func (s *Server) refreshUtilityMetrics(ctx context.Context) {
+	if s.us == nil {
+		return
+	}
+	keys, err := s.us.List(ctx)
+	if err != nil {
+		log.Printf("failed to list utility keys: %v", err)
+		return
+	}
+	for _, customerID := range keys {
+		total, err := s.us.Get(ctx, customerID)
+		if err != nil {
+			continue
+		}
+		agentUtilityTotal.With(prometheus.Labels{"customer_id": customerID}).Set(float64(total))
+	}
 }
 
 func (s *Server) refreshCreditsMetrics(ctx context.Context) {

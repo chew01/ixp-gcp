@@ -118,7 +118,7 @@ ifdef KAFKA_TLS_CA_FILE
 endif
 
 deploy-agent:
-	@echo "==> Deploying Customer Agent..."
+	@echo "==> Deploying Customer Agent (manual single-agent testing only)..."
 	docker build -t customer-agent:local ./agent
 	minikube image load customer-agent:local
 	kubectl apply -f ./agent/deployment.yaml
@@ -126,84 +126,148 @@ deploy-agent:
 # ============================================================
 # Grouped deploys
 # ============================================================
-.PHONY: infra services all
+.PHONY: infra services all load-experiment delete-agents
 
 infra: deploy-atomix deploy-config deploy-monitoring
 	$(MAKE) deploy-kafka $(if $(KAFKA_EXTERNAL),KAFKA_EXTERNAL=$(KAFKA_EXTERNAL),) KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
 
-services: vendor deploy-api deploy-auction deploy-dummy deploy-telemetry deploy-agent
+# Core services only — no dummy switch, no agents.
+services: vendor deploy-api deploy-auction deploy-telemetry
 
+# Default: deploy the core control plane only (no experiment traffic, no agents).
+# To also run an experiment: make all experiment=2a
+experiment ?=
+
+ifndef experiment
 all: infra services
+else
+EXPERIMENT_SCENARIO = $(firstword $(wildcard etc/scenario/experiment-$(experiment)-*.yaml etc/scenario/experiment-$(experiment).yaml))
+all: infra services load-experiment
+endif
+
+delete-agents:
+	kubectl delete deployment -l app=customer-agent --ignore-not-found
+
+load-experiment:
+	@test -f $(EXPERIMENT_SCENARIO) || (echo "Unknown experiment: $(experiment)"; exit 1)
+	@echo "==> Loading experiment scenario: $(EXPERIMENT_SCENARIO)"
+	kubectl create configmap test-scenario \
+		--from-file=scenario.yaml=$(EXPERIMENT_SCENARIO) \
+		-o yaml --dry-run=client | kubectl apply -f -
+	$(MAKE) deploy-dummy
+	@echo "==> Building customer-agent image..."
+	docker build -t customer-agent:local ./agent
+	minikube image load customer-agent:local
+	kubectl rollout restart deployment/auction-runner
+	kubectl rollout restart deployment/telemetry-service
+	kubectl rollout restart deployment/api-gateway
+	kubectl rollout status deployment/auction-runner --timeout=90s
+	kubectl rollout status deployment/api-gateway --timeout=90s
+	$(MAKE) delete-agents
+	cd scripts/gen-agent-deployments && go run . ../../$(EXPERIMENT_SCENARIO) | kubectl apply -f -
+	@echo "==> Experiment $(experiment) is live."
 
 # ============================================================
-# Experiments — swap scenario and restart all pods
+# Experiments — swap scenario, restart pods, redeploy agents
 # ============================================================
-# Active scenario file loaded into the test-scenario ConfigMap.
-# Override on the command line: make load-scenario SCENARIO=etc/scenario/experiment-1-baseline.yaml
-SCENARIO ?= etc/scenario/scenario.yaml
+# Preferred: make all experiment=2a
+# Legacy aliases kept for backward compatibility.
+#
+# Experiment index:
+#   1    — Baseline agent correctness (conservative × 2)
+#   2a   — Conservative vs conservative, spike traffic
+#   2b   — Conservative vs demand_corrected, spike traffic
+#   3    — Conservative vs price_insensitive, heterogeneous
+#   4a   — Conservative with finite budget
+#   4b   — Budget-aware with finite budget
+#   4c   — Throughput optimizer vs conservative
+#   5    — Auction convergence and stability
+#   6a   — Sensitivity: 10s interval
+#   6b   — Sensitivity: 30s interval
+#   6c   — Sensitivity: 60s interval
+#   7    — Valuation-based dominant strategy vs conservative
+#   7b   — Q-learning convergence vs valuation_based
+#   8    — Mixed valuations (same strategy, different valuations)
+#   9    — EMA negative result vs valuation_based
 
 .PHONY: load-scenario \
         deploy-experiment-1 \
         deploy-experiment-2a deploy-experiment-2b \
         deploy-experiment-3 \
-        deploy-experiment-4a deploy-experiment-4b \
+        deploy-experiment-4a deploy-experiment-4b deploy-experiment-4c \
         deploy-experiment-5 \
-        deploy-experiment-6a deploy-experiment-6b deploy-experiment-6c
+        deploy-experiment-6a deploy-experiment-6b deploy-experiment-6c \
+        deploy-experiment-7 deploy-experiment-7b \
+        deploy-experiment-8 \
+        deploy-experiment-9
 
+# load-scenario: bare reload (no agent restart) — for manual scenario swaps.
+SCENARIO ?= etc/scenario/scenario.yaml
 load-scenario:
 	@echo "==> Loading scenario: $(SCENARIO)"
 	kubectl create configmap test-scenario \
 		--from-file=scenario.yaml=$(SCENARIO) \
 		-o yaml --dry-run=client | kubectl apply -f -
-	kubectl rollout restart deployment/dummy-producer
 	kubectl rollout restart deployment/auction-runner
 	kubectl rollout restart deployment/telemetry-service
 	kubectl rollout restart deployment/api-gateway
-	kubectl rollout restart deployment/customer-agent-as12345
-	kubectl rollout restart deployment/customer-agent-as67890
 	@echo "==> Waiting for rollout..."
-	kubectl rollout status deployment/dummy-producer --timeout=90s
 	kubectl rollout status deployment/auction-runner --timeout=90s
 	kubectl rollout status deployment/api-gateway --timeout=90s
 	@echo "==> Scenario active: $(SCENARIO)"
 
 deploy-experiment-1:
-	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-1-baseline.yaml
+	$(MAKE) load-experiment experiment=1
 
 # Experiment 2 — Drop-Rate Algorithm vs. Fixed-Margin
-# Run A first, export metrics, reset, then Run B.
 deploy-experiment-2a:
-	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-2a-conservative-spike.yaml
+	$(MAKE) load-experiment experiment=2a
 
 deploy-experiment-2b:
-	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-2b-demand-corrected-spike.yaml
+	$(MAKE) load-experiment experiment=2b
 
-# Experiment 3 — Heterogeneous Strategies: Market Dynamics
+# Experiment 3 — Heterogeneous Strategies
 deploy-experiment-3:
-	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-3-heterogeneous.yaml
+	$(MAKE) load-experiment experiment=3
 
 # Experiment 4 — Budget Awareness and Credit Exhaustion
-# Run A first (conservative), export metrics, then Run B (budget_aware).
 deploy-experiment-4a:
-	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-4a-conservative-budget.yaml
+	$(MAKE) load-experiment experiment=4a
 
 deploy-experiment-4b:
-	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-4b-budget-aware.yaml
+	$(MAKE) load-experiment experiment=4b
+
+deploy-experiment-4c:
+	$(MAKE) load-experiment experiment=4c
 
 # Experiment 5 — Auction Convergence and Stability
 deploy-experiment-5:
-	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-5-convergence.yaml
+	$(MAKE) load-experiment experiment=5
 
 # Experiment 6 — Sensitivity to Auction Interval
-# Run each for 10 minutes, export metrics between runs.
 deploy-experiment-6a:
-	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-6a-interval-10s.yaml
+	$(MAKE) load-experiment experiment=6a
 
 deploy-experiment-6b:
-	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-6b-interval-30s.yaml
+	$(MAKE) load-experiment experiment=6b
 
 deploy-experiment-6c:
-	$(MAKE) load-scenario SCENARIO=etc/scenario/experiment-6c-interval-60s.yaml
+	$(MAKE) load-experiment experiment=6c
+
+# Experiment 7 — Dominant strategy validation
+deploy-experiment-7:
+	$(MAKE) load-experiment experiment=7
+
+deploy-experiment-7b:
+	$(MAKE) load-experiment experiment=7b
+
+# Experiment 8 — Mixed valuations
+deploy-experiment-8:
+	$(MAKE) load-experiment experiment=8
+
+# Experiment 9 — EMA negative result
+deploy-experiment-9:
+	$(MAKE) load-experiment experiment=9
 
 # ============================================================
 # Utilities
@@ -269,6 +333,18 @@ export-metrics:
 		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s)" \
 		--data-urlencode "end=$$(date +%s)" \
 		--data-urlencode "step=30s" >> $$FILE; \
+	printf ',"utility_per_round":' >> $$FILE; \
+	curl -sG "$(PROMETHEUS_URL)/api/v1/query_range" \
+		--data-urlencode "query=increase(ixp_agent_utility_total[30s])" \
+		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s)" \
+		--data-urlencode "end=$$(date +%s)" \
+		--data-urlencode "step=30s" >> $$FILE; \
+	printf ',"cumulative_utility":' >> $$FILE; \
+	curl -sG "$(PROMETHEUS_URL)/api/v1/query_range" \
+		--data-urlencode "query=ixp_agent_utility_total" \
+		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s)" \
+		--data-urlencode "end=$$(date +%s)" \
+		--data-urlencode "step=30s" >> $$FILE; \
 	printf '}' >> $$FILE; \
 	echo "Saved to $$FILE"
 
@@ -282,3 +358,4 @@ test:
 	@echo "==> Running unit tests..."
 	cd api && go test ./... && cd ..
 	cd agent && go test ./... && cd ..
+	cd scripts/gen-agent-deployments && go test ./... && cd ../..

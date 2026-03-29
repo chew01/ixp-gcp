@@ -19,9 +19,10 @@ type Customer struct {
 	ID              string            `yaml:"id"`               // e.g. "as12345"
 	SwitchID        string            `yaml:"switch_id"`        // switch these ports belong to
 	IngressPorts    []uint32          `yaml:"ingress_ports"`    // ports this customer owns on the switch
-	Strategy        string            `yaml:"strategy"`         // bidding strategy name (default: "conservative")
-	StrategyParams  map[string]string `yaml:"strategy_params"`  // strategy-specific tuning parameters
-	StartingBalance int               `yaml:"starting_balance"` // initial credit balance; 0 means unlimited
+	Strategy         string            `yaml:"strategy"`          // bidding strategy name (default: "conservative")
+	StrategyParams   map[string]string `yaml:"strategy_params"`   // strategy-specific tuning parameters
+	StartingBalance  int               `yaml:"starting_balance"`  // initial credit balance; 0 means unlimited
+	ValuationPerUnit int               `yaml:"valuation_per_unit"` // max willingness-to-pay per kbps unit; used for utility = (valuation - clearing_price) * allocated_units
 }
 
 type Switch struct {

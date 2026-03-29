@@ -7,10 +7,10 @@ name: experiment-2b-demand-corrected-spike
 # as12345 keeps conservative; as67890 switches to demand_corrected.
 #
 # During congestion demand_corrected bids (throughput + drop) × 1.05, so it bids
-# more units than conservative (e.g. round 6: ~18 vs 14). Proportional allocation
-# favours the higher bidder:
-#   as67890 (dc):   18 × 100 / (5×18 + 5×14) = 11.25 kbps/flow  →  drop ≈ 1.75 kbps
-#   as12345 (con):  14 × 100 / 160           =  8.75 kbps/flow  →  drop ≈ 4.25 kbps
+# more units than conservative (e.g. round 6: ~13 vs 11, given allocation≈10 and
+# drops≈3 from the previous round). Proportional allocation favours the higher bidder:
+#   as67890 (dc):   13 × 100 / (5×13 + 5×11) = 10.83 kbps/flow  →  drop ≈ 2.17 kbps
+#   as12345 (con):  11 × 100 / 120           =  9.17 kbps/flow  →  drop ≈ 3.83 kbps
 #
 # In subsequent rounds demand_corrected's effective demand falls as its drops
 # shrink, and it converges toward full allocation. Conservative remains stuck.
@@ -47,8 +47,10 @@ customers:
     switch_id: sw-1
     ingress_ports: [1, 2, 3, 4, 5]
     strategy: conservative
+    valuation_per_unit: 500
 
   - id: as67890
     switch_id: sw-1
     ingress_ports: [6, 7, 8, 9, 10]
     strategy: demand_corrected
+    valuation_per_unit: 500

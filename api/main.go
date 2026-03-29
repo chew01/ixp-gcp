@@ -34,6 +34,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to create auction history store: %v", err)
 	}
+	us, err := NewAtomixUtilityStore(ctx)
+	if err != nil {
+		log.Fatalf("failed to create utility store: %v", err)
+	}
 	// Ensure every customer from the scenario has a credits entry (total_spent=0) so GET /credits and Prometheus show them from the start.
 	seen := make(map[string]bool)
 	for _, c := range scen.Customers {
@@ -51,6 +55,7 @@ func main() {
 		bs:       bs,
 		cs:       cs,
 		hs:       hs,
+		us:       us,
 		scenario: scen,
 	}
 

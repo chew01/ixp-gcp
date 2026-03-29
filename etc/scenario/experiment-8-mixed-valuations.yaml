@@ -1,0 +1,55 @@
+version: v1
+name: experiment-8-mixed-valuations
+
+# Experiment 8 — Mixed Valuations: Heterogeneous Willingness to Pay
+#
+# Goal: Demonstrate that in a uniform-price auction with two truthful bidders,
+# the high-value agent (as67890) consistently wins more allocation in contested
+# rounds, and that the clearing price reflects the actual competition.
+#
+# Setup:
+#   - Both agents use valuation_based (dominant strategy for their respective valuations).
+#   - as12345: valuation_per_unit = 250 (low-value)
+#   - as67890: valuation_per_unit = 1000 (high-value)
+#   - Capacity (80 kbps) is set so only one agent can win a majority in contested rounds
+#     (total demand = 10 × 11 = 110 kbps > 80 kbps).
+#
+# Expected observations:
+#   - Clearing price settles near 250 (low valuation) — the marginal bidder's ceiling.
+#   - as67890 wins the majority of allocated units because it bids 4× higher.
+#   - as12345 wins only the residual (if any) after as67890 is served.
+#   - Utility for as67890: (1000 - clearing_price) × units — large positive margin.
+#   - Utility for as12345: (250 - clearing_price) × units — small positive or zero.
+#
+# Run duration: 20 auction intervals = ~10 minutes
+# Export: make export-metrics
+
+auction_result_kafka_topic: auction-results
+telemetry_kafka_topic: switch-telemetry
+
+reservation_price: 50
+auction_interval: 30s
+telemetry_interval: 1s
+
+switches:
+  - id: sw-1
+    ingress_ports: [1,2,3,4,5,6,7,8,9,10]
+    egress_ports: [0]
+    max_capacity: 80
+
+traffic:
+  pattern: steady
+  rate_kbps: 11
+
+customers:
+  - id: as12345
+    switch_id: sw-1
+    ingress_ports: [1, 2, 3, 4, 5]
+    strategy: valuation_based
+    valuation_per_unit: 250
+
+  - id: as67890
+    switch_id: sw-1
+    ingress_ports: [6, 7, 8, 9, 10]
+    strategy: valuation_based
+    valuation_per_unit: 1000

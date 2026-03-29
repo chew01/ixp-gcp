@@ -22,10 +22,13 @@ type flowKey struct {
 }
 
 type flowMemory struct {
-	prevState  int
-	prevAction int
-	prevDrop   float64
-	hasPrev    bool
+	prevState      int
+	prevAction     int
+	prevDrop       float64
+	hasPrev        bool
+	prevValuation  int
+	prevClearing   int
+	prevAllocUnits uint64
 }
 
 // QLearning uses tabular Q-learning to bid. It maintains a Q-table over
@@ -161,9 +164,12 @@ func (s *QLearning) ComputeBid(ctx BidContext) (units uint64, price uint64, skip
 		budgetBucket(ctx.Credits.StartingBalance, ctx.Credits.TotalSpent),
 	)
 
-	// Update Q table: reward is the improvement in drop rate since last round.
+	// Update Q table: reward is utility earned in the previous round.
+	// utility = (valuation_per_unit - clearing_price) * allocated_units
+	// This aligns the agent's objective with economic efficiency rather than
+	// drop-rate reduction, and rewards winning rounds at low clearing prices.
 	if fm.hasPrev {
-		reward := fm.prevDrop - dropRate // positive = fewer drops this round
+		reward := float64(fm.prevValuation-fm.prevClearing) * float64(fm.prevAllocUnits)
 		old := s.Q[fm.prevState][fm.prevAction]
 		s.Q[fm.prevState][fm.prevAction] = old + s.Alpha*(reward+s.Gamma*s.maxQ(currState)-old)
 	}
@@ -179,6 +185,9 @@ func (s *QLearning) ComputeBid(ctx BidContext) (units uint64, price uint64, skip
 	fm.prevState = currState
 	fm.prevAction = action
 	fm.prevDrop = dropRate
+	fm.prevValuation = ctx.ValuationPerUnit
+	fm.prevClearing = ctx.LastClearingPrice
+	fm.prevAllocUnits = ctx.LastAllocatedUnits
 	fm.hasPrev = true
 
 	// Translate action index to a concrete price.

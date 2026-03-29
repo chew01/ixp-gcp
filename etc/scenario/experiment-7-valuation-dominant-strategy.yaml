@@ -1,0 +1,66 @@
+version: v1
+name: experiment-7-valuation-dominant-strategy
+
+# Experiment 7 — Valuation-Based: Dominant Strategy Validation
+#
+# Goal: Does price-following (conservative) lose allocation in rounds where a
+# truthful bidder (valuation_based) would win?
+#
+# Observable mechanism:
+#   After the traffic spike, valuation_based's demand (5 ports × 13 kbps × 1.05 ≈ 68
+#   units) exceeds total capacity (60), so it fills all available bandwidth and bids
+#   at 500. Conservative bids only throughput×1.1 at the last clearing price (50),
+#   which is below the clearing price 500 — it receives zero allocation.
+#   The utility gap across those rounds is the measurable cost of not bidding
+#   truthfully. This directly validates the dominant-strategy theorem for
+#   second-price (uniform-price) auctions.
+#
+# Setup:
+#   - Capacity (60 kbps) sits above valuation_based's steady-state demand
+#     (5 ports × 9 kbps = 45 kbps) but below its spike demand
+#     (5 ports × 13 kbps = 65 kbps), so the spike forces genuine scarcity.
+#   - In steady state both customers win allocation at clearing price = 50
+#     (reservation price); conservative tracks this and bids 50 into the spike.
+#   - Spike to 13 kbps/flow at interval 5 makes valuation_based's demand exceed
+#     capacity alone, driving the clearing price to 500 and zeroing conservative's
+#     allocation.
+#
+# Key graph to watch:
+#   - ixp_customer_allocation_kbps: conservative drops to zero during the spike;
+#     valuation_based wins full allocation.
+#   - increase(ixp_agent_utility_total[30s]): utility gap widens sharply at interval 5.
+#
+# Run duration: 25 auction intervals = ~12 minutes
+# Export: make export-metrics
+
+auction_result_kafka_topic: auction-results
+telemetry_kafka_topic: switch-telemetry
+
+reservation_price: 50
+auction_interval: 30s
+telemetry_interval: 1s
+
+switches:
+  - id: sw-1
+    ingress_ports: [1,2,3,4,5,6,7,8,9,10]
+    egress_ports: [0]
+    max_capacity: 60
+
+traffic:
+  pattern: spike
+  rate_kbps: 9
+  spike_after_intervals: 5
+  spike_rate_kbps: 13
+
+customers:
+  - id: as12345
+    switch_id: sw-1
+    ingress_ports: [1, 2, 3, 4, 5]
+    strategy: conservative
+    valuation_per_unit: 500
+
+  - id: as67890
+    switch_id: sw-1
+    ingress_ports: [6, 7, 8, 9, 10]
+    strategy: valuation_based
+    valuation_per_unit: 500

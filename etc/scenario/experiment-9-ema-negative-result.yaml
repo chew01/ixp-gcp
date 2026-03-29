@@ -1,0 +1,78 @@
+version: v1
+name: experiment-9-ema-negative-result
+
+# Experiment 9 — EMA Strategy: Negative Result
+#
+# Goal: Show that price-following (EMA/exploratory) is structurally suboptimal in
+# a second-price auction. After a clearing-price spike, the EMA strategy lags
+# behind the true market price and under-bids, losing allocation in rounds where
+# valuation_based wins.
+#
+# Theoretical argument (see docs/AGENTS.md §EMA):
+#   In a second-price (uniform-price) auction, the dominant strategy is to bid
+#   exactly at true valuation. The clearing price is determined by others' bids,
+#   not by the winner's bid. EMA price-following conflates "price I pay" with
+#   "optimal bid price" — a category error that causes under-bidding whenever the
+#   clearing price rises faster than the EMA tracks it.
+#
+# Setup:
+#   - Both agents have identical traffic and valuation.
+#   - as12345: exploratory (EMA, ema_alpha=0.3)
+#   - as67890: valuation_based (bids at true valuation every round)
+#   - Spike at interval 5 triggers the divergence.
+#
+# Why capacity=60 matters:
+#   With capacity=90, as67890 only demands 65 units at spike (5 ports × 13 kbps),
+#   always leaving 25 residual units. as12345 wins those 25 units at its low EMA
+#   bid (≈55), so the clearing price never rises above 55 — the "spike" the
+#   EMA is supposed to lag behind never materialises. With capacity=60, as67890's
+#   demand (65) exceeds capacity, filling it entirely and driving the clearing
+#   price to 500. The EMA (still tracking ≈50+5=55) is below the clearing price
+#   and as12345 wins zero allocation for that round, producing the observable
+#   utility gap.
+#
+# Expected observations:
+#   - After the spike, as67890 immediately bids at 500 and wins full allocation
+#     (60 units, capped by capacity).
+#   - as12345 EMA is still near 55 (≈50+epsilon); it under-bids and receives
+#     zero allocation for 2–3 rounds until the EMA catches up to 500.
+#   - Cumulative utility gap: as67890 > as12345 even though both have the same
+#     traffic and valuation.
+#
+# Run duration: 20 auction intervals = ~10 minutes
+# Export: make export-metrics
+
+auction_result_kafka_topic: auction-results
+telemetry_kafka_topic: switch-telemetry
+
+reservation_price: 50
+auction_interval: 30s
+telemetry_interval: 1s
+
+switches:
+  - id: sw-1
+    ingress_ports: [1,2,3,4,5,6,7,8,9,10]
+    egress_ports: [0]
+    max_capacity: 60
+
+traffic:
+  pattern: spike
+  rate_kbps: 9
+  spike_after_intervals: 5
+  spike_rate_kbps: 13
+
+customers:
+  - id: as12345
+    switch_id: sw-1
+    ingress_ports: [1, 2, 3, 4, 5]
+    strategy: exploratory
+    strategy_params:
+      ema_alpha: "0.3"
+      ema_epsilon: "5"
+    valuation_per_unit: 500
+
+  - id: as67890
+    switch_id: sw-1
+    ingress_ports: [6, 7, 8, 9, 10]
+    strategy: valuation_based
+    valuation_per_unit: 500
