@@ -1,4 +1,4 @@
-VENDOR_MODULES = api auction dummy telemetry agent
+VENDOR_MODULES = api auction dummy telemetry agent dashboard
 
 # ============================================================
 # External Kafka support
@@ -353,6 +353,35 @@ export-metrics:
 		--data-urlencode "step=30s" >> $$FILE; \
 	printf '}' >> $$FILE; \
 	echo "Saved to $$FILE"
+
+# ============================================================
+# Dashboard
+# ============================================================
+.PHONY: build-dashboard deploy-dashboard dashboard-ui
+
+build-dashboard:
+	@echo "==> Vendoring dashboard dependencies..."
+	cd dashboard && go mod vendor
+	@echo "==> Building dashboard Docker image (includes frontend build)..."
+	eval $$(minikube docker-env) && docker build -t dashboard:local ./dashboard
+
+deploy-dashboard:
+	@echo "==> Deploying Dashboard..."
+	kubectl apply -f dashboard/rbac.yaml
+	cd dashboard && go mod vendor
+	eval $$(minikube docker-env) && docker build -t dashboard:local ./dashboard
+	kubectl apply -f dashboard/deployment.yaml
+	kubectl set env deployment/dashboard KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
+ifdef KAFKA_TLS_CA_FILE
+	kubectl set env deployment/dashboard \
+		KAFKA_TLS_CA_FILE=$(KAFKA_TLS_CA_FILE) \
+		KAFKA_TLS_CERT_FILE=$(KAFKA_TLS_CERT_FILE) \
+		KAFKA_TLS_KEY_FILE=$(KAFKA_TLS_KEY_FILE)
+endif
+
+dashboard-ui:
+	@echo "==> Opening dashboard at http://localhost:8082 ..."
+	kubectl port-forward svc/dashboard 8082:8082
 
 stop:
 	minikube delete

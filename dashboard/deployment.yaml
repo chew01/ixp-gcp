@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard
+  labels:
+    app: dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dashboard
+  template:
+    metadata:
+      labels:
+        app: dashboard
+        proxy.atomix.io/inject: "true"
+        proxy.atomix.io/profile: "ixp-storage-profile"
+    spec:
+      serviceAccountName: dashboard
+      containers:
+        - name: dashboard
+          image: dashboard:local
+          ports:
+            - name: http
+              containerPort: 8082
+          env:
+            - name: SCENARIO_PATH
+              value: /etc/scenario/scenario.yaml
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: scenario-volume
+              mountPath: /etc/scenario
+              readOnly: true
+      volumes:
+        - name: scenario-volume
+          configMap:
+            name: test-scenario
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard
+  labels:
+    app: dashboard
+spec:
+  selector:
+    app: dashboard
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082
