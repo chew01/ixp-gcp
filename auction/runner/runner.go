@@ -16,8 +16,10 @@ import (
 	"github.com/chew01/ixp-gcp/auction/algo"
 	"github.com/chew01/ixp-gcp/auction/models"
 	"github.com/chew01/ixp-gcp/shared"
+	pb "github.com/chew01/ixp-gcp/shared/proto/pb"
 	"github.com/chew01/ixp-gcp/shared/scenario"
 	"github.com/segmentio/kafka-go"
+	"google.golang.org/protobuf/proto"
 )
 
 // AuctionRunner owns the auction loop
@@ -158,15 +160,20 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 }
 
 func (r *AuctionRunner) WriteResults(ctx context.Context, switchID string, ingressPort, egressPort, bandwidthKbps uint64) error {
-	results := shared.AuctionResultRecord{
-		IngressPort:   ingressPort,
-		EgressPort:    egressPort,
+	ingressPort32 := uint32(ingressPort)
+	egressPort32 := uint32(egressPort)
+	result := &pb.AuctionResult{
+		FlowId: &pb.Flow{
+			IngressPort: &ingressPort32,
+			EgressPort:  &egressPort32,
+		},
 		BandwidthKbps: bandwidthKbps,
 	}
+
 	key := fmt.Sprintf("%s-results", switchID)
-	value, err := json.Marshal(results)
+	value, err := proto.Marshal(result)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("marshal auction result: %w", err)
 	}
 
 	err = r.writer.WriteMessages(ctx, kafka.Message{

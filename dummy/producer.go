@@ -2,14 +2,14 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
-	"github.com/chew01/ixp-gcp/shared"
+	pb "github.com/chew01/ixp-gcp/shared/proto/pb"
 	"github.com/chew01/ixp-gcp/shared/scenario"
 	"github.com/segmentio/kafka-go"
+	"google.golang.org/protobuf/proto"
 )
 
 type DummyProducer struct {
@@ -171,24 +171,31 @@ func (p *DummyProducer) Run(ctx context.Context) {
 				state.tx += txInc
 				p.counters[key] = state
 
-				t := shared.TelemetryRecord{
-					FlowID: shared.Flow{
-						IngressPort:  s.inPort,
-						EgressPort:   s.ePort,
-						SourceVLANID: 10,
-						DestVLANID:   20,
-					},
-					RxByteCount: state.rx,
-					TxByteCount: state.tx,
+				flow := &pb.Flow{
+					IngressPort:  proto.Uint32(s.inPort),
+					SourceVlanid: proto.Uint32(10),
+					EgressPort:   proto.Uint32(s.ePort),
+					DestVlanid:   proto.Uint32(20),
 				}
 
-				value, err := json.Marshal(t)
+				keyBytes, err := proto.Marshal(flow)
 				if err != nil {
 					log.Fatal(err)
 				}
+
+				report := &pb.TelemetryReport{
+					FlowId:      flow,
+					RxByteCount: state.rx,
+					TxByteCount: state.tx,
+				}
+				valueBytes, err := proto.Marshal(report)
+				if err != nil {
+					log.Fatal(err)
+				}
+
 				messages = append(messages, kafka.Message{
-					Key:   []byte(p.switchID),
-					Value: value,
+					Key:   keyBytes,
+					Value: valueBytes,
 				})
 			}
 

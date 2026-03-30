@@ -5,6 +5,7 @@ go 1.25.4
 require (
 	github.com/chew01/ixp-gcp/shared v0.0.0
 	github.com/segmentio/kafka-go v0.4.50
+	google.golang.org/protobuf v1.36.11
 )
 
 require (

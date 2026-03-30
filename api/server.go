@@ -119,7 +119,7 @@ func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	flowKey := buildFlowKey(switchID, ingress, egress)
+	flowKey := buildFlowKey(ingress, egress)
 	log.Printf("Fetching flow: %s", flowKey)
 
 	value, err := s.fs.Get(r.Context(), flowKey)
@@ -380,6 +380,11 @@ func (s *Server) refreshAuctionMetrics(ctx context.Context) {
 }
 
 func (s *Server) refreshMetrics(ctx context.Context) {
+	switchID := ""
+	if s.scenario != nil && len(s.scenario.Switches) > 0 {
+		switchID = s.scenario.Switches[0].ID
+	}
+
 	keys, err := s.fs.List(ctx)
 	if err != nil {
 		log.Printf("failed to list flow keys: %v", err)
@@ -387,7 +392,7 @@ func (s *Server) refreshMetrics(ctx context.Context) {
 	}
 
 	for _, flowKey := range keys {
-		switchID, ingress, egress, err := parseFlowKey(flowKey)
+		ingress, egress, err := parseFlowKey(flowKey)
 		if err != nil {
 			log.Printf("failed to parse flow key: %v", err)
 			continue
@@ -423,12 +428,12 @@ func (s *Server) refreshMetrics(ctx context.Context) {
 
 func parseFlowParams(r *http.Request) (string, int, int, error) {
 	q := r.URL.Query()
-	switchID := q.Get("switch_id")
+	switchID := q.Get("switch_id") // optional; used only for ownership verification
 	ingressStr := q.Get("ingress_port")
 	egressStr := q.Get("egress_port")
 
-	if switchID == "" || ingressStr == "" || egressStr == "" {
-		return "", 0, 0, fmt.Errorf("missing required query params: switch_id, ingress_port, egress_port")
+	if ingressStr == "" || egressStr == "" {
+		return "", 0, 0, fmt.Errorf("missing required query params: ingress_port, egress_port")
 	}
 
 	ingress, err := strconv.Atoi(ingressStr)
@@ -444,27 +449,27 @@ func parseFlowParams(r *http.Request) (string, int, int, error) {
 	return switchID, ingress, egress, nil
 }
 
-func buildFlowKey(switchID string, ingress, egress int) string {
-	return fmt.Sprintf("%s|%d|%d", switchID, ingress, egress)
+func buildFlowKey(ingress, egress int) string {
+	return fmt.Sprintf("%d|%d", ingress, egress)
 }
 
-func parseFlowKey(key string) (string, int, int, error) {
+func parseFlowKey(key string) (int, int, error) {
 	parts := strings.Split(key, "|")
-	if len(parts) != 3 {
-		return "", 0, 0, fmt.Errorf("invalid flow key format: %s", key)
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid flow key format: %s", key)
 	}
 
-	ingress, err := strconv.Atoi(parts[1])
+	ingress, err := strconv.Atoi(parts[0])
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("invalid ingress port in flow key: %s", key)
+		return 0, 0, fmt.Errorf("invalid ingress port in flow key: %s", key)
 	}
 
-	egress, err := strconv.Atoi(parts[2])
+	egress, err := strconv.Atoi(parts[1])
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("invalid egress port in flow key: %s", key)
+		return 0, 0, fmt.Errorf("invalid egress port in flow key: %s", key)
 	}
 
-	return parts[0], ingress, egress, nil
+	return ingress, egress, nil
 }
 
 func validateBid(bid shared.BidRequest) error {

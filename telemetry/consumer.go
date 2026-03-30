@@ -12,7 +12,9 @@ import (
 	"github.com/atomix/go-sdk/pkg/generic"
 	atomixmap "github.com/atomix/go-sdk/pkg/primitive/map"
 	"github.com/chew01/ixp-gcp/shared"
+	pb "github.com/chew01/ixp-gcp/shared/proto/pb"
 	"github.com/segmentio/kafka-go"
+	"google.golang.org/protobuf/proto"
 )
 
 type FlowState struct {
@@ -22,7 +24,6 @@ type FlowState struct {
 }
 
 type FlowMetrics struct {
-	SwitchID    string
 	FlowKey     string
 	IngressKbps float64
 	EgressKbps  float64
@@ -88,14 +89,17 @@ func (c *Consumer) Run(ctx context.Context) {
 }
 
 func (c *Consumer) handleMessage(ctx context.Context, msg kafka.Message) error {
-	log.Printf("Received message: %s", string(msg.Value))
-	var record shared.TelemetryRecord
-	if err := json.Unmarshal(msg.Value, &record); err != nil {
-		return fmt.Errorf("failed to parse JSON: %w", err)
+	var report pb.TelemetryReport
+	if err := proto.Unmarshal(msg.Value, &report); err != nil {
+		return fmt.Errorf("failed to parse proto value: %w", err)
 	}
 
-	switchID := string(msg.Key)
-	flowKey := buildFlowKey(switchID, record.FlowID)
+	flow := report.GetFlowId()
+	if flow == nil {
+		return fmt.Errorf("telemetry report has no flow_id")
+	}
+
+	flowKey := buildFlowKey(flow)
 
 	prev, err := c.getFlowState(ctx, flowKey)
 	if err != nil {
@@ -103,22 +107,21 @@ func (c *Consumer) handleMessage(ctx context.Context, msg kafka.Message) error {
 	}
 
 	if prev != nil {
-		metrics, ok := computeMetrics(switchID, flowKey, record, *prev, msg.Time)
+		metrics, ok := computeMetrics(flowKey, &report, *prev, msg.Time)
 		if ok {
 			c.publishMetrics(ctx, metrics)
 		}
 	} else {
-		log.Printf("[switch=%s] flow %d→%d: first record, establishing baseline",
-			switchID,
-			record.FlowID.IngressPort,
-			record.FlowID.EgressPort,
+		log.Printf("flow %d→%d: first record, establishing baseline",
+			flow.GetIngressPort(),
+			flow.GetEgressPort(),
 		)
 	}
 
 	return c.setFlowState(ctx, flowKey, FlowState{
 		LastSeenTime: msg.Time,
-		LastRxBytes:  record.RxByteCount,
-		LastTxBytes:  record.TxByteCount,
+		LastRxBytes:  report.GetRxByteCount(),
+		LastTxBytes:  report.GetTxByteCount(),
 	})
 }
 
@@ -164,8 +167,7 @@ func (c *Consumer) publishMetrics(ctx context.Context, m FlowMetrics) {
 	c.throughputMap.Put(ctx, m.FlowKey, string(b))
 
 	log.Printf(
-		"[switch=%s] flow %s: ingress=%.2f Kbps egress=%.2f Kbps drop=%.2f Kbps (%.2f%%)",
-		m.SwitchID,
+		"flow %s: ingress=%.2f Kbps egress=%.2f Kbps drop=%.2f Kbps (%.2f%%)",
 		m.FlowKey,
 		m.IngressKbps,
 		m.EgressKbps,
@@ -176,22 +178,21 @@ func (c *Consumer) publishMetrics(ctx context.Context, m FlowMetrics) {
 	// TODO: forward to TSDB
 }
 
-func buildFlowKey(switchID string, flow shared.Flow) string {
-	return fmt.Sprintf("%s|%d|%d",
-		switchID,
-		flow.IngressPort,
-		flow.EgressPort,
+func buildFlowKey(flow *pb.Flow) string {
+	return fmt.Sprintf("%d|%d",
+		flow.GetIngressPort(),
+		flow.GetEgressPort(),
 	)
 }
 
-func computeMetrics(switchID, flowKey string, record shared.TelemetryRecord, prev FlowState, msgTime time.Time) (FlowMetrics, bool) {
+func computeMetrics(flowKey string, report *pb.TelemetryReport, prev FlowState, msgTime time.Time) (FlowMetrics, bool) {
 	dt := msgTime.Sub(prev.LastSeenTime).Seconds()
 	if dt <= 0 {
 		return FlowMetrics{}, false
 	}
 
-	rxDelta := delta(record.RxByteCount, prev.LastRxBytes)
-	txDelta := delta(record.TxByteCount, prev.LastTxBytes)
+	rxDelta := delta(report.GetRxByteCount(), prev.LastRxBytes)
+	txDelta := delta(report.GetTxByteCount(), prev.LastTxBytes)
 
 	var dropDelta uint64
 	if rxDelta > txDelta {
@@ -212,7 +213,6 @@ func computeMetrics(switchID, flowKey string, record shared.TelemetryRecord, pre
 	}
 
 	return FlowMetrics{
-		SwitchID:    switchID,
 		FlowKey:     flowKey,
 		IngressKbps: ingressBps / 1e3,
 		EgressKbps:  egressBps / 1e3,

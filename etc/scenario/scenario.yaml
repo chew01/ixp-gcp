@@ -1,23 +1,5 @@
 version: v1
-name: experiment-4b-budget-aware
-
-# Experiment 4 — Budget Awareness and Credit Exhaustion  (Run B: budget_aware)
-#
-# Both agents use budget_aware with a finite starting_balance of 5000 credits
-# (identical to Run A for a fair comparison — only strategy changes).
-#
-# budget_aware bids EMA + epsilon(5) when balance > 75%, lifting clearing above
-# reservation_price after ~8 warm-up rounds. As each agent's balance falls, bids
-# step down through tiers (75% → 50% of EMA → reservation_price), reducing
-# allocation gradually rather than collapsing all at once.
-#
-# Expected vs Run A:
-#   - Clearing rises above reservation during the well-funded phase.
-#   - Credits deplete more slowly once agents enter lower tiers.
-#   - Throughput degrades gradually; no abrupt exhaustion cliff.
-#
-# Run duration: until exhaustion or 40 intervals (~20 minutes)
-# Export: make export-metrics
+name: real
 
 auction_result_kafka_topic: auction-results
 telemetry_kafka_topic: switch-telemetry
@@ -26,27 +8,23 @@ reservation_price: 50
 auction_interval: 30s
 telemetry_interval: 1s
 
+# The physical switch has no retrievable identity yet; this label is used only for
+# internal port-assignment validation. Update once the switch can be identified.
 switches:
-  - id: sw-1
-    ingress_ports: [1,2,3,4,5,6,7,8,9,10]
-    egress_ports: [0]
-    max_capacity: 100
-
-traffic:
-  pattern: steady
-  rate_kbps: 11
+  - id: sw-real
+    ingress_ports: [52, 60]
+    egress_ports: [132]
+    max_capacity: 1000  # TODO: replace with measured egress line-rate (kbps)
 
 customers:
-  - id: as12345
-    switch_id: sw-1
-    ingress_ports: [1, 2, 3, 4, 5]
-    strategy: budget_aware
-    starting_balance: 50000
+  - id: peer-vlan11
+    switch_id: sw-real
+    ingress_ports: [60]   # flow: ingress=60, egress=132, source_vlan=11
+    strategy: conservative
     valuation_per_unit: 500
 
-  - id: as67890
-    switch_id: sw-1
-    ingress_ports: [6, 7, 8, 9, 10]
-    strategy: budget_aware
-    starting_balance: 50000
+  - id: peer-vlan38
+    switch_id: sw-real
+    ingress_ports: [52]   # flow: ingress=52, egress=132, source_vlan=38
+    strategy: conservative
     valuation_per_unit: 500

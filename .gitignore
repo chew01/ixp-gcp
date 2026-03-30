@@ -31,3 +31,9 @@ go.work.sum
 .DS_Store
 
 certs/
+
+agent/agent
+api/api
+auction/auction
+dummy/dummy
+telemetry/telemetry

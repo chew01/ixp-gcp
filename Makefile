@@ -34,8 +34,7 @@ KAFKA_TLS_KEY_FILE  ?=
 
 deploy-api:
 	@echo "==> Deploying API Gateway..."
-	docker build -t api-gateway:local ./api
-	minikube image load api-gateway:local
+	eval $$(minikube docker-env) && docker build -t api-gateway:local ./api
 	kubectl apply -f ./api/ingress.yaml
 	kubectl apply -f ./api/deployment.yaml
 	kubectl apply -f ./api/service-monitor.yaml
@@ -48,8 +47,7 @@ deploy-atomix:
 
 deploy-auction:
 	@echo "==> Deploying Auction Runner..."
-	docker build -t auction-runner:local ./auction
-	minikube image load auction-runner:local
+	eval $$(minikube docker-env) && docker build -t auction-runner:local ./auction
 	kubectl apply -f ./auction/deployment.yaml
 	kubectl set env deployment/auction-runner KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
 ifdef KAFKA_TLS_CA_FILE
@@ -67,8 +65,7 @@ deploy-config:
 
 deploy-dummy:
 	@echo "==> Deploying Dummy Producer..."
-	docker build -t dummy-producer:local ./dummy
-	minikube image load dummy-producer:local
+	eval $$(minikube docker-env) && docker build -t dummy-producer:local ./dummy
 	kubectl apply -f ./dummy/deployment.yaml
 	kubectl set env deployment/dummy-producer KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
 ifdef KAFKA_TLS_CA_FILE
@@ -106,8 +103,7 @@ deploy-monitoring:
 
 deploy-telemetry:
 	@echo "==> Deploying Telemetry Processor..."
-	docker build -t telemetry-service:local ./telemetry
-	minikube image load telemetry-service:local
+	eval $$(minikube docker-env) && docker build -t telemetry-service:local ./telemetry
 	kubectl apply -f ./telemetry/deployment.yaml
 	kubectl set env deployment/telemetry-service KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
 ifdef KAFKA_TLS_CA_FILE
@@ -119,14 +115,13 @@ endif
 
 deploy-agent:
 	@echo "==> Deploying Customer Agent (manual single-agent testing only)..."
-	docker build -t customer-agent:local ./agent
-	minikube image load customer-agent:local
+	eval $$(minikube docker-env) && docker build -t customer-agent:local ./agent
 	kubectl apply -f ./agent/deployment.yaml
 
 # ============================================================
 # Grouped deploys
 # ============================================================
-.PHONY: infra services all load-experiment delete-agents
+.PHONY: infra services all load-experiment delete-agents deploy-real
 
 infra: deploy-atomix deploy-config deploy-monitoring
 	$(MAKE) deploy-kafka $(if $(KAFKA_EXTERNAL),KAFKA_EXTERNAL=$(KAFKA_EXTERNAL),) KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
@@ -156,8 +151,7 @@ load-experiment:
 		-o yaml --dry-run=client | kubectl apply -f -
 	$(MAKE) deploy-dummy
 	@echo "==> Building customer-agent image..."
-	docker build -t customer-agent:local ./agent
-	minikube image load customer-agent:local
+	eval $$(minikube docker-env) && docker build -t customer-agent:local ./agent
 	kubectl rollout restart deployment/auction-runner
 	kubectl rollout restart deployment/telemetry-service
 	kubectl rollout restart deployment/api-gateway
@@ -200,6 +194,18 @@ load-experiment:
         deploy-experiment-7 deploy-experiment-7b \
         deploy-experiment-8 \
         deploy-experiment-9
+
+# deploy-real: load etc/scenario/scenario.yaml against a real switch.
+# Pushes the config, restarts core services, and deploys one agent pod per
+# customer. No dummy producer is started.
+deploy-real:
+	@echo "==> Loading real-switch scenario..."
+	$(MAKE) load-scenario
+	@echo "==> Building customer-agent image..."
+	eval $$(minikube docker-env) && docker build -t customer-agent:local ./agent
+	$(MAKE) delete-agents
+	cd scripts/gen-agent-deployments && go run . ../../etc/scenario/scenario.yaml | kubectl apply -f -
+	@echo "==> Real-switch scenario live."
 
 # load-scenario: bare reload (no agent restart) — for manual scenario swaps.
 SCENARIO ?= etc/scenario/scenario.yaml
