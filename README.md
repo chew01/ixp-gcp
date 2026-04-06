@@ -22,7 +22,7 @@ This will set up all necessary infra and services, including:
 - **Observability**: Prometheus, Grafana, OTEL Collector, Jaeger, Loki
 - **Services**: API Gateway, Auction Runner, Telemetry Processor, Dummy Producer
 
-#### Observability & Monitoring
+#### Observability
 
 The system includes a complete observability stack for metrics, traces, and logs:
 This will set up all necessary infra and services (API gateway, auction runner, telemetry, dummy producer, and customer agents).
@@ -69,10 +69,10 @@ make grafana-ui
 # Then visit: http://localhost:3000 (admin/admin)
 
 # Access Prometheus (raw metrics)
-kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090
+kubectl port-forward -n observability svc/observability-kube-prometheus-prometheus 9090:9090
 
 # Access Jaeger (distributed tracing)
-kubectl port-forward -n monitoring svc/jaeger-all-in-one-query 16686:16686
+kubectl port-forward -n observability svc/jaeger 16686:16686
 ```
 
 **Business Metrics Tracked:**

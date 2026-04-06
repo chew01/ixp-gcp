@@ -1,5 +1,9 @@
 VENDOR_MODULES = api auction dummy telemetry agent
 
+# Load .env file if it exists
+-include .env
+export $(shell sed 's/=.*//' .env 2>/dev/null)
+
 # ============================================================
 # Individual deploys
 # ============================================================
@@ -70,6 +74,7 @@ deploy-observability:
 	helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
 		--namespace observability \
 		-f helm/opentelemetry-collector/values.yaml \
+		--timeout 10m \
 		--wait
 	
 	# Deploy Jaeger (all-in-one for development)
@@ -118,6 +123,29 @@ deploy-observability:
 	kubectl label configmap ixp-auctions-dashboard \
 		-n observability grafana_dashboard="1" --overwrite
 
+	# Apply IXP Errors dashboard
+	@echo "==> Deploying IXP Errors dashboard..."
+	kubectl create configmap ixp-errors-dashboard \
+		--from-file=ixp-errors.json=./observability/ixp-errors.json \
+		-n observability -o yaml --dry-run=client | kubectl apply -f -
+	kubectl label configmap ixp-errors-dashboard \
+		-n observability grafana_dashboard="1" --overwrite
+
+	# Apply custom IXP alert rules
+	@echo "==> Applying IXP alert rules..."
+	kubectl apply -f ./observability/alerts-ixp.yaml
+
+	# Configure Telegram secret only if TELEGRAM_BOT_TOKEN is provided.
+	# This keeps deploy idempotent and avoids committing secrets to source control.
+	@if [ -n "$$TELEGRAM_BOT_TOKEN" ]; then \
+		echo "==> Applying Telegram secret from TELEGRAM_BOT_TOKEN..."; \
+		kubectl -n observability create secret generic alertmanager-telegram-secret \
+			--from-literal=bot-token="$$TELEGRAM_BOT_TOKEN" \
+			-o yaml --dry-run=client | kubectl apply -f -; \
+	else \
+		echo "==> TELEGRAM_BOT_TOKEN not set; keeping existing alertmanager-telegram-secret"; \
+	fi
+
 	@echo ""
 	@echo "✅ Observability stack deployed successfully!"
 	@echo ""
@@ -144,14 +172,17 @@ deploy-agent:
 # ============================================================
 # Grouped deploys
 # ============================================================
-.PHONY: infra services all
+.PHONY: infra services all debug-infra debug-services debug
 
 infra: deploy-minikube deploy-kafka deploy-atomix deploy-config deploy-observability
 
 services: vendor deploy-api deploy-auction deploy-telemetry deploy-dummy deploy-agent
 
-all: infra services
+debug-services: vendor deploy-api deploy-dummy
 
+debug: infra debug-services
+
+all: infra services
 # ============================================================
 # Utilities
 # ============================================================
@@ -198,3 +229,4 @@ test:
 	@echo "==> Running unit tests..."
 	cd api && go test ./... && cd ..
 	cd agent && go test ./... && cd ..
+

@@ -3,17 +3,68 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/atomix/go-sdk/pkg/atomix"
 	"github.com/atomix/go-sdk/pkg/generic"
 	atomixmap "github.com/atomix/go-sdk/pkg/primitive/map"
 	"github.com/chew01/ixp-gcp/shared"
+	localotel "github.com/chew01/ixp-gcp/shared/otel"
 	"github.com/segmentio/kafka-go"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
+
+var (
+	telemetryMetricsOnce sync.Once
+	telemetryErrorsTotal metric.Int64Counter
+)
+
+type processingError struct {
+	target string
+	err    error
+}
+
+func (e *processingError) Error() string {
+	return e.err.Error()
+}
+
+func (e *processingError) Unwrap() error {
+	return e.err
+}
+
+func newProcessingError(target string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &processingError{target: target, err: err}
+}
+
+func initTelemetryMetrics() {
+	telemetryMetricsOnce.Do(func() {
+		var err error
+		telemetryErrorsTotal, err = localotel.Meter.Int64Counter(
+			"ixp.telemetry.errors.total",
+			metric.WithDescription("Errors encountered during stream processing"),
+			metric.WithUnit("1"),
+		)
+		if err != nil {
+			log.Printf("failed to initialize telemetryErrorsTotal: %v", err)
+		}
+	})
+}
+
+func recordTelemetryError(ctx context.Context, target string) {
+	if telemetryErrorsTotal == nil {
+		return
+	}
+	telemetryErrorsTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("error_target", target)))
+}
 
 type FlowState struct {
 	LastSeenTime time.Time `json:"last_seen_time"`
@@ -36,11 +87,14 @@ type Consumer struct {
 	throughputMap atomixmap.Map[string, string]
 }
 
-func NewConsumer(ctx context.Context, kafkaBootstrap, topic string) (*Consumer, error) {
+func NewConsumer(ctx context.Context, kafkaBootstrap, topic string, dialer *kafka.Dialer) (*Consumer, error) {
+	initTelemetryMetrics()
+
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{kafkaBootstrap},
 		Topic:   topic,
 		GroupID: "telemetry-service",
+		Dialer:  dialer,
 	})
 
 	flowStateMap, err := atomix.Map[string, string]("flow-state-map").
@@ -81,6 +135,10 @@ func (c *Consumer) Run(ctx context.Context) {
 		}
 
 		if err := c.handleMessage(ctx, msg); err != nil {
+			var pErr *processingError
+			if errors.As(err, &pErr) {
+				recordTelemetryError(ctx, pErr.target)
+			}
 			log.Printf("Error handling message: %v", err)
 		}
 	}
@@ -89,7 +147,7 @@ func (c *Consumer) Run(ctx context.Context) {
 func (c *Consumer) handleMessage(ctx context.Context, msg kafka.Message) error {
 	var record shared.TelemetryRecord
 	if err := json.Unmarshal(msg.Value, &record); err != nil {
-		return fmt.Errorf("failed to parse JSON: %w", err)
+		return newProcessingError("kafka_decode", fmt.Errorf("failed to parse JSON: %w", err))
 	}
 
 	switchID := string(msg.Key)
@@ -103,7 +161,9 @@ func (c *Consumer) handleMessage(ctx context.Context, msg kafka.Message) error {
 	if prev != nil {
 		metrics, ok := computeMetrics(switchID, flowKey, record, *prev, msg.Time)
 		if ok {
-			c.publishMetrics(ctx, metrics)
+			if err := c.publishMetrics(ctx, metrics); err != nil {
+				return err
+			}
 		}
 	} else {
 		log.Printf("[switch=%s] flow %d→%d: first record, establishing baseline",
@@ -113,11 +173,15 @@ func (c *Consumer) handleMessage(ctx context.Context, msg kafka.Message) error {
 		)
 	}
 
-	return c.setFlowState(ctx, flowKey, FlowState{
+	if err := c.setFlowState(ctx, flowKey, FlowState{
 		LastSeenTime: msg.Time,
 		LastRxBytes:  record.RxByteCount,
 		LastTxBytes:  record.TxByteCount,
-	})
+	}); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (c *Consumer) getFlowState(ctx context.Context, key string) (*FlowState, error) {
@@ -141,13 +205,13 @@ func (c *Consumer) setFlowState(ctx context.Context, key string, state FlowState
 	}
 
 	if _, err := c.flowStateMap.Put(ctx, key, string(b)); err != nil {
-		return fmt.Errorf("failed to put flow state: %w", err)
+		return newProcessingError("atomix_write", fmt.Errorf("failed to put flow state: %w", err))
 	}
 
 	return nil
 }
 
-func (c *Consumer) publishMetrics(ctx context.Context, m FlowMetrics) {
+func (c *Consumer) publishMetrics(ctx context.Context, m FlowMetrics) error {
 	val := shared.FlowMetricsValue{
 		ThroughputKbps: m.IngressKbps,
 		EgressKbps:     m.EgressKbps,
@@ -156,10 +220,11 @@ func (c *Consumer) publishMetrics(ctx context.Context, m FlowMetrics) {
 	}
 	b, err := json.Marshal(val)
 	if err != nil {
-		log.Printf("failed to marshal flow metrics: %v", err)
-		return
+		return newProcessingError("kafka_decode", fmt.Errorf("failed to marshal flow metrics: %w", err))
 	}
-	c.throughputMap.Put(ctx, m.FlowKey, string(b))
+	if _, err := c.throughputMap.Put(ctx, m.FlowKey, string(b)); err != nil {
+		return newProcessingError("atomix_write", fmt.Errorf("failed to put flow metrics: %w", err))
+	}
 
 	log.Printf(
 		"[switch=%s] flow %s: ingress=%.2f Kbps egress=%.2f Kbps drop=%.2f Kbps (%.2f%%)",
@@ -172,6 +237,7 @@ func (c *Consumer) publishMetrics(ctx context.Context, m FlowMetrics) {
 	)
 
 	// TODO: forward to TSDB
+	return nil
 }
 
 func buildFlowKey(switchID string, flow shared.Flow) string {

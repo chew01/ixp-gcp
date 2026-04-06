@@ -1,0 +1,136 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ixp-alert-rules
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: ixp-alert-rules
+    release: observability
+spec:
+  groups:
+    - name: ixp-availability
+      rules:
+        - alert: IXPApiGatewayUnavailable
+          expr: kube_deployment_status_replicas_available{namespace="default",deployment="api-gateway"} < kube_deployment_spec_replicas{namespace="default",deployment="api-gateway"}
+          for: 15s
+          labels:
+            severity: critical
+            service: ixp
+            component: api-gateway
+          annotations:
+            summary: "API gateway deployment unavailable"
+            description: "api-gateway has fewer available replicas than desired for at least 15s. available={{ $value }}"
+
+    - name: ixp-system-health
+      interval: 30s  # Evaluate every 30s for faster detection
+      rules:
+        # ============================================================
+        # Atomix Store Dependency Chain Monitoring
+        # ============================================================
+        # These alerts trigger when the consensus store becomes unavailable
+        # or severely degraded, breaking the dependency chain for place bids,
+        # get flows, and other critical operations.
+
+        - alert: IXPAtomixOperationFailuresCritical
+          expr: sum(rate(ixp_atomix_operation_errors_total{operation!="bootstrap"}[1m])) > 0
+          for: 5s
+          labels:
+            severity: critical
+            service: ixp
+            component: api-gateway
+            signal: dependency-chain-broken
+          annotations:
+            summary: "❌ Atomix store operation failures detected - DEPENDENCY CHAIN BROKEN"
+            description: |
+              ⚠️ API Gateway detected Atomix operation errors.
+              This indicates the consensus store (dependency chain) is unavailable or failing.
+              
+              🔴 IMPACT: Place bids and get flows will fail
+              ❌ Error rate: {{ $value }}/sec (threshold: > 0)
+              
+              ACTION REQUIRED: Check Atomix store health and replicas
+              - Is the store still running? Run: kubectl get pods -n default | grep atomix
+              - Check pod logs: kubectl logs -n default <pod-name>
+              - Check store connectivity: kubectl exec -it <api-pod> -- curl -v <atomix-service>
+
+        - alert: IXPAtomixNearTotalFailure
+          expr: rate(ixp_atomix_operation_errors_total{operation!="bootstrap"}[1m]) > 0.5
+          for: 5s
+          labels:
+            severity: critical
+            service: ixp
+            component: api-gateway
+            signal: store-unavailable
+          annotations:
+            summary: "🚨 Atomix store near COMPLETE FAILURE - {{ $value }} errors/sec"
+            description: |
+              🚨 CRITICAL: High error rate from Atomix operation failures detected!
+              This means bids cannot be placed and flows cannot be retrieved.
+              
+              ❌ Error rate: {{ $value }} per second (threshold: > 0.5)
+              
+              ACTION REQUIRED: Immediate intervention needed!
+              1. Check if Atomix store replicas were scaled down: kubectl get deployment -n default | grep atomix
+              2. Verify network connectivity: kubectl exec -it <api-pod> -- nc -zv <atomix-host> <atomix-port>
+              3. Check for resource exhaustion: kubectl top nodes
+
+        - alert: IXPAtomixConnectionErrors
+          expr: rate(ixp_atomix_operation_errors_total{error_type="connection"}[1m]) > 0
+          for: 5s
+          labels:
+            severity: critical
+            service: ixp
+            component: api-gateway
+            signal: connectivity-broken
+          annotations:
+            summary: "🔌 Atomix connection errors - NETWORK/STORE DOWN"
+            description: |
+              Cannot connect to Atomix consensus store (connection errors detected).
+              This is likely a network issue or the store is completely down.
+              
+              ACTION REQUIRED:
+              1. Verify Atomix pods status: kubectl get pods -n default -l app=consensus-store
+              2. Check network policies: kubectl get networkpolicies -A
+              3. Verify Atomix service: kubectl get svc -n default | grep consensus-store
+
+        - alert: IXPAtomixVeryHighLatencyCritical
+          expr: histogram_quantile(0.99, rate(ixp_atomix_operation_duration_milliseconds_bucket[2m])) > 1000
+          for: 15s
+          labels:
+            severity: critical
+            service: ixp
+            signal: congestion
+            component: api-gateway
+          annotations:
+            summary: "🔥 Atomix p99 latency CRITICAL ({{ $value }}ms) - severe congestion"
+            description: "API Atomix operations p99 latency: {{ $value }}ms (threshold: 1000ms). Severe congestion detected across all operations. Immediate action required."
+
+        # ============================================================
+        # API Gateway Request Latency Monitoring
+        # ============================================================
+        # Detects congestion caused by high request volume (e.g., bid spam)
+        # Uses HTTP server metrics automatically instrumented by otelhttp.NewHandler
+
+        - alert: IXPAPIGatewayBidCongestion
+          expr: histogram_quantile(0.99, rate(http_server_duration_seconds_bucket{http_route="/bids",http_method="POST"}[2m])) > 0.5
+          for: 15s
+          labels:
+            severity: warning
+            service: ixp
+            signal: congestion
+            component: api-gateway
+          annotations:
+            summary: "⚠️ API Gateway POST /bids p99 latency WARNING ({{ $value }}s) - congestion detected"
+            description: "API Gateway POST /bids request p99 latency: {{ $value }}s (threshold: 0.5s). Possible high bidding volume causing congestion. Check request rate and consider adding backpressure."
+
+        - alert: IXPAPIGatewayBidHighLatencyCritical
+          expr: histogram_quantile(0.99, rate(http_server_duration_seconds_bucket{http_route="/bids",http_method="POST"}[2m])) > 1.0
+          for: 10s
+          labels:
+            severity: critical
+            service: ixp
+            signal: congestion
+            component: api-gateway
+          annotations:
+            summary: "🔥 API Gateway POST /bids p99 latency CRITICAL ({{ $value }}s) - severe congestion"
+            description: "API Gateway POST /bids request p99 latency: {{ $value }}s (threshold: 1.0s). CRITICAL congestion on bid placement. Requests are severely delayed. Immediate action required."

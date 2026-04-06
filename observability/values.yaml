@@ -59,11 +59,74 @@ prometheus:
             labels:
               service: 'otel-collector'
 
+# kube-prometheus-stack global defaults
+defaultRules:
+  create: true
+  rules:
+    etcd: false
+
+prometheus-node-exporter:
+  prometheus:
+    monitor:
+      interval: "10s"
+
+kube-state-metrics:
+  prometheus:
+    monitor:
+      interval: "10s"
+
 # ==============================================================================
 # Optional: Disable components not needed for local development
 # ==============================================================================
 alertmanager:
-  enabled: false
+  enabled: true
+  alertmanagerSpec:
+    replicas: 1
+    retention: 120h
+    # Secret must contain key 'bot-token'.
+    secrets:
+      - alertmanager-telegram-secret
+
+  # Baseline routing so alerts are grouped and handled deterministically.
+  # Default receiver is 'null' until an external receiver (e.g. Telegram) is enabled.
+  config:
+    global:
+      resolve_timeout: 5m
+
+    route:
+      receiver: "null"
+      group_by: ["alertname", "namespace", "job"]
+      group_wait: 5s
+      group_interval: 5m
+      repeat_interval: 3h
+      routes:
+        - receiver: "telegram"
+          matchers:
+            - 'alertname =~ "^IXP.*"'
+            - 'severity =~ "warning|critical"'
+
+    receivers:
+      - name: "null"
+      - name: "telegram"
+        telegram_configs:
+          - bot_token_file: /etc/alertmanager/secrets/alertmanager-telegram-secret/bot-token
+            # Replace with your Telegram chat ID (integer).
+            chat_id: 6269922199
+            parse_mode: HTML
+            send_resolved: true
+
+    inhibit_rules:
+      - source_matchers: ["severity = critical"]
+        target_matchers: ["severity = warning"]
+        equal: ["alertname", "namespace"]
+
+  # Telegram wiring:
+  # 1) Create secret in observability namespace:
+  #    kubectl -n observability create secret generic alertmanager-telegram-secret \
+  #      --from-literal=bot-token='<telegram-bot-token>'
+  # 2) Set the Telegram chat ID in this file under:
+  #    alertmanager.config.receivers[name=telegram].telegram_configs[0].chat_id
+  # 3) Redeploy observability stack.
 
 # Keep Prometheus Operator enabled (required for ServiceMonitors)
 prometheusOperator:

@@ -46,8 +46,8 @@ config:
 
   processors:
     batch:
-      timeout: 10s
-      send_batch_size: 1024
+      timeout: 1s
+      send_batch_size: 512
 
   exporters:
     # Export traces to Jaeger (all-in-one deployment)
@@ -67,7 +67,8 @@ config:
       const_labels:
         environment: development
     
-    # Debug exporter for troubleshooting
+    # Debug exporter for troubleshooting - outputs all signals (logs, metrics, traces) to stdout
+    # This ensures you can see real-time logs via kubectl logs
     debug:
       verbosity: detailed
 
@@ -90,3 +91,14 @@ config:
         receivers: [otlp]
         processors: [batch]
         exporters: [prometheus, debug]
+
+# ServiceMonitor to register OTEL collector metrics with Prometheus operator
+# This tells Prometheus to scrape metrics from the OTEL collector's prometheus exporter (:8889)
+serviceMonitor:
+  enabled: true
+  namespace: observability
+  labels:
+    release: observability
+  interval: 10s
+  scrapeTimeout: 10s
+  relabelings: []

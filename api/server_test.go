@@ -47,7 +47,7 @@ func (f *fakeCreditsStore) AddSpent(ctx context.Context, customerID string, amou
 	return nil
 }
 
-func (f *fakeCreditsStore) InitCustomerIfMissing(ctx context.Context, customerID string) error {
+func (f *fakeCreditsStore) InitCustomerIfMissing(ctx context.Context, customerID string, startingBalance int) error {
 	return nil
 }
 

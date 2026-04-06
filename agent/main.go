@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/chew01/ixp-gcp/agent/strategy"
 	"github.com/chew01/ixp-gcp/shared"
 	localotel "github.com/chew01/ixp-gcp/shared/otel"
 	"github.com/chew01/ixp-gcp/shared/scenario"
@@ -53,6 +54,42 @@ func loadConfig() (config, error) {
 	}, nil
 }
 
+// customerStrategy returns the strategy name and params for the given customer
+// from the scenario. Defaults to "conservative" with no params if not set.
+func customerStrategy(scene *scenario.Scenario, customerID string) (name string, params map[string]string) {
+	for _, c := range scene.Customers {
+		if c.ID == customerID {
+			name = c.Strategy
+			if name == "" {
+				name = "conservative"
+			}
+			return name, c.StrategyParams
+		}
+	}
+	return "conservative", nil
+}
+
+func selectStrategy(name string, params map[string]string) (strategy.Bidder, error) {
+	switch name {
+	case "conservative":
+		return strategy.Conservative{}, nil
+	case "demand_corrected":
+		return strategy.DemandCorrected{}, nil
+	case "price_insensitive":
+		return strategy.NewPriceInsensitive(params), nil
+	case "backoff":
+		return strategy.NewBackoff(params), nil
+	case "budget_aware":
+		return strategy.NewBudgetAware(params), nil
+	case "exploratory":
+		return strategy.NewExploratory(params), nil
+	case "q_learning":
+		return strategy.NewQLearning(params), nil
+	default:
+		return nil, fmt.Errorf("unknown strategy %q", name)
+	}
+}
+
 func main() {
 	ctx := context.Background()
 	// Set up OpenTelemetry.
@@ -74,6 +111,12 @@ func main() {
 	scene, err := scenario.Load(cfg.ScenarioPath)
 	if err != nil {
 		log.Fatalf("failed to load scenario: %v", err)
+	}
+
+	stratName, stratParams := customerStrategy(scene, cfg.CustomerID)
+	strat, err := selectStrategy(stratName, stratParams)
+	if err != nil {
+		log.Fatalf("strategy error: %v", err)
 	}
 
 	customerPorts := deriveCustomerPorts(scene, cfg.CustomerID)
@@ -98,10 +141,10 @@ func main() {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	log.Printf("customer agent starting for %s, interval=%s, api=%s", cfg.CustomerID, interval, cfg.APIBaseURL)
+	log.Printf("customer agent starting for %s, interval=%s, api=%s, strategy=%s", cfg.CustomerID, interval, cfg.APIBaseURL, stratName)
 
 	// Run immediately once, then on each tick.
-	if err := runOnce(ctx, client, cfg, scene, customerPorts); err != nil {
+	if err := runOnce(ctx, client, cfg, scene, customerPorts, strat); err != nil {
 		log.Printf("runOnce error: %v", err)
 	}
 
@@ -111,7 +154,7 @@ func main() {
 			log.Println("customer agent shutting down")
 			return
 		case <-ticker.C:
-			if err := runOnce(ctx, client, cfg, scene, customerPorts); err != nil {
+			if err := runOnce(ctx, client, cfg, scene, customerPorts, strat); err != nil {
 				log.Printf("runOnce error: %v", err)
 			}
 		}
@@ -155,7 +198,7 @@ func deriveCustomerPorts(scene *scenario.Scenario, customerID string) []customer
 	return out
 }
 
-func runOnce(ctx context.Context, client *http.Client, cfg config, scene *scenario.Scenario, ports []customerPorts) error {
+func runOnce(ctx context.Context, client *http.Client, cfg config, scene *scenario.Scenario, ports []customerPorts, strat strategy.Bidder) error {
 	ctx, span := localotel.Tracer.Start(ctx, "agent-run-once")
 	defer span.End()
 	span.SetAttributes(attribute.String("customer_id", cfg.CustomerID))
@@ -172,7 +215,7 @@ func runOnce(ctx context.Context, client *http.Client, cfg config, scene *scenar
 		for _, in := range cp.Ingress {
 			for _, eg := range cp.Egress {
 				log.Printf("placing bid for %s in=%d eg=%d", cp.SwitchID, in, eg)
-				if err := placeBidForFlow(ctx, client, cfg, scene, cp.SwitchID, in, eg, credits); err != nil {
+				if err := placeBidForFlow(ctx, client, cfg, scene, cp.SwitchID, in, eg, credits, strat); err != nil {
 					span.RecordError(err)
 					log.Printf("placeBidForFlow error for %s in=%d eg=%d: %v", cp.SwitchID, in, eg, err)
 				}
@@ -220,7 +263,7 @@ func fetchCredits(ctx context.Context, client *http.Client, cfg config) (shared.
 	return cred, nil
 }
 
-func placeBidForFlow(ctx context.Context, client *http.Client, cfg config, scene *scenario.Scenario, switchID string, ingress, egress uint32, credits shared.CustomerCredits) error {
+func placeBidForFlow(ctx context.Context, client *http.Client, cfg config, scene *scenario.Scenario, switchID string, ingress, egress uint32, credits shared.CustomerCredits, strat strategy.Bidder) error {
 	ctx, span := localotel.Tracer.Start(ctx, "agent-place-bid-for-flow")
 	defer span.End()
 	span.SetAttributes(
@@ -245,23 +288,23 @@ func placeBidForFlow(ctx context.Context, client *http.Client, cfg config, scene
 
 	lastClearing := fetchLastClearingPrice(ctx, client, cfg, egress)
 
-	// Simple heuristic:
-	// - Units: 10% above current throughput, at least 1 kbps.
-	// - Price: max(reservation_price, last_clearing_price).
-	unitsF := metrics.ThroughputKbps * 1.1
-	if unitsF < 1 {
-		// If essentially no traffic and no drop, skip bidding.
-		if metrics.ThroughputKbps <= 0 && metrics.DropKbps <= 0 {
-			return nil
-		}
-		unitsF = 1
+	bidCtx := strategy.BidContext{
+		Scene:             scene,
+		CustomerID:        cfg.CustomerID,
+		SwitchID:          switchID,
+		IngressPort:       ingress,
+		EgressPort:        egress,
+		Metrics:           metrics,
+		Credits:           credits,
+		LastClearingPrice: lastClearing,
 	}
-	units := uint64(unitsF)
 
-	price := scene.ReservationPrice
-	if lastClearing > 0 && lastClearing > price {
-		price = lastClearing
+	units, priceU64, skip := strat.ComputeBid(bidCtx)
+	if skip {
+		return nil
 	}
+
+	price := int(priceU64)
 
 	// Construct bid request.
 	in64 := uint64(ingress)

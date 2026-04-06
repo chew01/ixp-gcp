@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"strings"
 
 	"github.com/atomix/go-sdk/pkg/atomix"
 	"github.com/atomix/go-sdk/pkg/generic"
@@ -47,13 +48,13 @@ func (s *AtomixFlowStore) Get(ctx context.Context, flowKey string) (string, erro
 	defer span.End()
 	entry, err := s.throughputMap.Get(ctx, flowKey)
 	if err != nil {
-		msg := fmt.Sprintf("flow %s not found: %v", flowKey, err)
-		span.SetStatus(codes.Error, "flow-not-found")
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			return "", nil
+		}
+		span.SetStatus(codes.Error, "flow-read-failed")
 		span.RecordError(err)
-		slog.ErrorContext(ctx, msg, "flowKey", flowKey, "error", err)
-		// Treat missing keys as "not found" and let callers decide how to surface
-		// this (e.g. 404 from the API or a skipped flow in an agent).
-		return "", nil
+		slog.ErrorContext(ctx, "flow state read failed", "flowKey", flowKey, "error", err)
+		return "", fmt.Errorf("failed to read flow %s: %w", flowKey, err)
 	}
 	return entry.Value, nil
 }
@@ -240,8 +241,9 @@ type CreditsStore interface {
 	Get(ctx context.Context, customerID string) (shared.CustomerCredits, error)
 	List(ctx context.Context) ([]string, error) // customer IDs
 	AddSpent(ctx context.Context, customerID string, amount int) error
-	// InitCustomerIfMissing ensures the customer has an entry (total_spent=0); no-op if already present.
-	InitCustomerIfMissing(ctx context.Context, customerID string) error
+	// InitCustomerIfMissing ensures the customer has a credits entry; no-op if already present.
+	// startingBalance sets the finite credit budget (0 = unlimited / no budget constraint).
+	InitCustomerIfMissing(ctx context.Context, customerID string, startingBalance int) error
 }
 
 type AtomixCreditsStore struct {
@@ -261,7 +263,11 @@ func NewAtomixCreditsStore(ctx context.Context) (*AtomixCreditsStore, error) {
 func (s *AtomixCreditsStore) Get(ctx context.Context, customerID string) (shared.CustomerCredits, error) {
 	entry, err := s.creditsMap.Get(ctx, customerID)
 	if err != nil {
-		return shared.CustomerCredits{}, nil // no entry yet
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			return shared.CustomerCredits{}, nil // no entry yet
+		}
+		slog.ErrorContext(ctx, "credits read failed", "customer_id", customerID, "error", err)
+		return shared.CustomerCredits{}, fmt.Errorf("failed to read credits for %s: %w", customerID, err)
 	}
 	var cred shared.CustomerCredits
 	if err := json.Unmarshal([]byte(entry.Value), &cred); err != nil {
@@ -302,14 +308,15 @@ func (s *AtomixCreditsStore) AddSpent(ctx context.Context, customerID string, am
 	return nil
 }
 
-// InitCustomerIfMissing creates a zero credits entry for the customer if the key is not yet in the map.
-// Existing entries are left unchanged so total_spent is never overwritten.
-func (s *AtomixCreditsStore) InitCustomerIfMissing(ctx context.Context, customerID string) error {
+// InitCustomerIfMissing creates a credits entry for the customer if the key is not yet in the map.
+// Existing entries are left unchanged so total_spent is never overwritten on redeploy.
+// startingBalance is stored in the entry so budget-aware strategies can access it; 0 = unlimited.
+func (s *AtomixCreditsStore) InitCustomerIfMissing(ctx context.Context, customerID string, startingBalance int) error {
 	_, err := s.creditsMap.Get(ctx, customerID)
 	if err == nil {
 		return nil // already has an entry
 	}
-	cred := shared.CustomerCredits{}
+	cred := shared.CustomerCredits{StartingBalance: startingBalance}
 	b, err := json.Marshal(cred)
 	if err != nil {
 		return fmt.Errorf("marshal credits: %w", err)

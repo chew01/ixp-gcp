@@ -5,12 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/chew01/ixp-gcp/shared"
 	localotel "github.com/chew01/ixp-gcp/shared/otel"
@@ -21,27 +21,34 @@ import (
 )
 
 var (
-	bidMetricsOnce       sync.Once
+	serverMetricsOnce    sync.Once
 	flowThroughput       metric.Float64ObservableGauge
 	flowDropRate         metric.Float64ObservableGauge
 	flowDropKbps         metric.Float64ObservableGauge
 	flowEgressKbps       metric.Float64ObservableGauge
 	customerCreditsSpent metric.Float64ObservableGauge
+	auctionClearingPrice metric.Float64ObservableGauge
+	customerAllocation   metric.Float64ObservableGauge
 	bidPriceHistogram    metric.Int64Histogram
 	bidUnitHistogram     metric.Int64Histogram
+	apiPolicyViolations  metric.Int64Counter
 )
 
 // InitServerMetrics initializes the instruments using the Meter
 // created by your boilerplate code.
 func (s *Server) InitServerMetrics() {
-	bidMetricsOnce.Do(func() {
+	serverMetricsOnce.Do(func() {
 		var err error
 
 		// Callback for flow throughput metric
 		callback_refreshThroughput := func(ctx context.Context, observer metric.Float64Observer) error {
-			keys, err := s.fs.List(ctx)
+			// Fail-fast: 50ms timeout prevents OTel exporter thread starvation
+			timeoutCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+			defer cancel()
+			keys, err := s.fs.List(timeoutCtx)
 			if err != nil {
-				return err
+				// Return nil, not err - allows OTel to push counters even if gauge fails
+				return nil
 			}
 
 			for _, flowKey := range keys {
@@ -74,9 +81,13 @@ func (s *Server) InitServerMetrics() {
 
 		// Callback for flow drop rate metric
 		callback_refreshDropRate := func(ctx context.Context, observer metric.Float64Observer) error {
-			keys, err := s.fs.List(ctx)
+			// Fail-fast: 50ms timeout prevents OTel exporter thread starvation
+			timeoutCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+			defer cancel()
+			keys, err := s.fs.List(timeoutCtx)
 			if err != nil {
-				return err
+				// Return nil, not err - allows OTel to push counters even if gauge fails
+				return nil
 			}
 
 			for _, flowKey := range keys {
@@ -108,9 +119,13 @@ func (s *Server) InitServerMetrics() {
 
 		// Callback for flow drop kbps metric
 		callback_refreshDropKbps := func(ctx context.Context, observer metric.Float64Observer) error {
-			keys, err := s.fs.List(ctx)
+			// Fail-fast: 50ms timeout prevents OTel exporter thread starvation
+			timeoutCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+			defer cancel()
+			keys, err := s.fs.List(timeoutCtx)
 			if err != nil {
-				return err
+				// Return nil, not err - allows OTel to push counters even if gauge fails
+				return nil
 			}
 
 			for _, flowKey := range keys {
@@ -142,9 +157,13 @@ func (s *Server) InitServerMetrics() {
 
 		// Callback for flow egress kbps metric
 		callback_refreshEgressKbps := func(ctx context.Context, observer metric.Float64Observer) error {
-			keys, err := s.fs.List(ctx)
+			// Fail-fast: 50ms timeout prevents OTel exporter thread starvation
+			timeoutCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+			defer cancel()
+			keys, err := s.fs.List(timeoutCtx)
 			if err != nil {
-				return err
+				// Return nil, not err - allows OTel to push counters even if gauge fails
+				return nil
 			}
 
 			for _, flowKey := range keys {
@@ -176,10 +195,14 @@ func (s *Server) InitServerMetrics() {
 
 		// Callback for customer credits metric
 		callback_refreshCreditMetrics := func(ctx context.Context, observer metric.Float64Observer) error {
-			keys, err := s.cs.List(ctx)
+			// Fail-fast: 50ms timeout prevents OTel exporter thread starvation
+			timeoutCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+			defer cancel()
+			keys, err := s.cs.List(timeoutCtx)
 			if err != nil {
 				slog.ErrorContext(ctx, fmt.Sprintf("failed to list credits keys: %v", err))
-				return err
+				// Return nil, not err - allows OTel to push counters even if gauge fails
+				return nil
 			}
 
 			for _, customerID := range keys {
@@ -194,6 +217,58 @@ func (s *Server) InitServerMetrics() {
 
 				observer.Observe(float64(cred.TotalSpent), metric.WithAttributeSet(attrs))
 			}
+			return nil
+		}
+
+		// Callback for latest auction metrics per egress port.
+		callback_refreshAuctionMetrics := func(ctx context.Context, observer metric.Float64Observer) error {
+			// Fail-fast: 50ms timeout prevents OTel exporter thread starvation
+			timeoutCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+			defer cancel()
+			keys, err := s.hs.List(timeoutCtx)
+			if err != nil {
+				slog.ErrorContext(ctx, fmt.Sprintf("failed to list auction history keys: %v", err))
+				// Return nil, not err - allows OTel to push counters even if gauge fails
+				return nil
+			}
+
+			latest := make(map[uint64]*shared.AuctionHistoryRecord)
+			for _, key := range keys {
+				raw, err := s.hs.Get(ctx, key)
+				if err != nil || raw == "" {
+					continue
+				}
+
+				var rec shared.AuctionHistoryRecord
+				if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+					slog.ErrorContext(ctx, fmt.Sprintf("failed to unmarshal auction history %s: %v", key, err))
+					continue
+				}
+
+				prev, ok := latest[rec.EgressPort]
+				if !ok || rec.Interval > prev.Interval {
+					r := rec
+					latest[rec.EgressPort] = &r
+				}
+			}
+
+			for egressPort, rec := range latest {
+				egressAttrs := attribute.NewSet(attribute.Int64("egress_port", int64(egressPort)))
+				observer.Observe(float64(rec.ClearingPrice), metric.WithAttributeSet(egressAttrs))
+
+				totalsByCustomer := make(map[string]float64)
+				for _, alloc := range rec.Allocations {
+					totalsByCustomer[alloc.CustomerID] += float64(alloc.Units)
+				}
+				for customerID, total := range totalsByCustomer {
+					attrs := attribute.NewSet(
+						attribute.String("customer_id", customerID),
+						attribute.Int64("egress_port", int64(egressPort)),
+					)
+					observer.Observe(total, metric.WithAttributeSet(attrs))
+				}
+			}
+
 			return nil
 		}
 
@@ -252,6 +327,26 @@ func (s *Server) InitServerMetrics() {
 			slog.Error("Failed to initialise customerCreditsSpent metric", "error", err)
 		}
 
+		auctionClearingPrice, err = localotel.Meter.Float64ObservableGauge(
+			"ixp.auction.clearing_price",
+			metric.WithDescription("Latest auction clearing price per egress port"),
+			metric.WithUnit("price"),
+			metric.WithFloat64Callback(callback_refreshAuctionMetrics),
+		)
+		if err != nil {
+			slog.Error("Failed to initialise auctionClearingPrice metric", "error", err)
+		}
+
+		customerAllocation, err = localotel.Meter.Float64ObservableGauge(
+			"ixp.customer.allocation_kbps",
+			metric.WithDescription("Allocated bandwidth in Kbps per customer per egress port (latest auction round)"),
+			metric.WithUnit("kbps"),
+			metric.WithFloat64Callback(callback_refreshAuctionMetrics),
+		)
+		if err != nil {
+			slog.Error("Failed to initialise customerAllocation metric", "error", err)
+		}
+
 		// Initialize Bid Price Histogram
 		bidPriceHistogram, err = localotel.Meter.Int64Histogram(
 			"ixp.bid.price",
@@ -272,7 +367,39 @@ func (s *Server) InitServerMetrics() {
 			slog.Error("Failed to initialize bid histograms", "error", err)
 		}
 
+		apiPolicyViolations, err = localotel.Meter.Int64Counter(
+			"ixp.api.policy.violations",
+			metric.WithDescription("HTTP 400/403 errors from invalid agent bids"),
+			metric.WithUnit("1"),
+		)
+		if err != nil {
+			slog.Error("Failed to initialize apiPolicyViolations", "error", err)
+		} else {
+			apiPolicyViolations.Add(context.Background(), 1, metric.WithAttributes(attribute.String("reason", "startup_bootstrap")))
+			slog.Info("Bootstrap increment emitted", "metric", "ixp_api_policy_violations_total", "reason", "startup_bootstrap")
+		}
+
+		// Initialize Atomix metrics from shared module
+		localotel.InitAtomixMetrics()
+
 	})
+}
+
+// recordAtomixLatency is a convenience wrapper around localotel.RecordAtomixOperation
+// Use this in the API gateway
+func recordAtomixLatency(ctx context.Context, operation string, startTime time.Time, err error) {
+	localotel.RecordAtomixOperation(ctx, operation, startTime, err)
+}
+
+func recordAPIPolicyViolation(ctx context.Context, reason string) {
+	if apiPolicyViolations == nil {
+		slog.ErrorContext(ctx, "apiPolicyViolations counter is nil", "reason", reason)
+		return
+	}
+	ctxMetric := context.WithoutCancel(ctx)
+	slog.DebugContext(ctx, "Recording apiPolicyViolations counter", "reason", reason)
+	apiPolicyViolations.Add(ctxMetric, 1, metric.WithAttributes(attribute.String("reason", reason)))
+	slog.DebugContext(ctx, "Successfully recorded apiPolicyViolations counter", "reason", reason)
 }
 
 type Server struct {
@@ -336,10 +463,25 @@ func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
 
 	flowKey := buildFlowKey(switchID, ingress, egress)
 	slog.DebugContext(ctx, fmt.Sprintf("Fetching flow: %s", flowKey), "flowKey", flowKey)
-	// log.Printf("Fetching flow: %s", flowKey)
 
-	value, err := s.fs.Get(ctx, flowKey)
+	// Check if flow store is available
+	if s.fs == nil {
+		slog.ErrorContext(ctx, "Atomix store unavailable", "operation", "read_flows")
+		span.SetStatus(codes.Error, "atomix-unavailable")
+		http.Error(w, "flow store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Add context timeout for Atomix operation to prevent goroutine starvation
+	atomixCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	startAtomixTime := time.Now()
+	value, err := s.fs.Get(atomixCtx, flowKey)
+	recordAtomixLatency(context.Background(), "read_flows", startAtomixTime, err)
+
 	if err != nil {
+		slog.ErrorContext(ctx, "flow store read failed", "operation", "read_flows", "flow_key", flowKey, "error", err)
 		span.SetStatus(codes.Error, "error-fetching-flow")
 		span.RecordError(err)
 		http.Error(w, fmt.Sprintf("error fetching flow: %v", err), http.StatusInternalServerError)
@@ -397,6 +539,7 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := validateBid(ctx, bid); err != nil {
+		recordAPIPolicyViolation(ctx, "bid_validation_failed")
 		span.SetStatus(codes.Error, "bid-validation-failed")
 		span.RecordError(err)
 		slog.ErrorContext(ctx, "bid validation failed", "error", err)
@@ -412,13 +555,31 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 		if switchID != "" {
 			owner, ok := scenario.CustomerForIngressPort(s.scenario, switchID, uint32(*bid.IngressPort))
 			if !ok || owner != customerID {
+				recordAPIPolicyViolation(ctx, "customer_authorization_failed")
 				http.Error(w, "ingress port not owned by this customer", http.StatusForbidden)
 				return
 			}
 		}
 	}
 
-	if err := s.bs.Put(ctx, bid, customerID); err != nil {
+	// Check if bid store is available
+	if s.bs == nil {
+		slog.ErrorContext(ctx, "Atomix store unavailable", "operation", "write_bid")
+		span.SetStatus(codes.Error, "atomix-unavailable")
+		http.Error(w, "bid store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Add context timeout for Atomix operation to prevent goroutine starvation
+	atomixCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	startAtomixTime := time.Now()
+	err := s.bs.Put(atomixCtx, bid, customerID)
+	recordAtomixLatency(context.Background(), "write_bid", startAtomixTime, err)
+
+	if err != nil {
+		slog.ErrorContext(ctx, "bid store write failed", "operation", "write_bid", "customer_id", customerID, "error", err)
 		span.SetStatus(codes.Error, "bid-storing-failed")
 		span.RecordError(err)
 		msg := fmt.Sprintf("failed to store bid: %v", err)
@@ -428,6 +589,7 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.DebugContext(ctx, fmt.Sprintf("bid stored for %s in=%d eg=%d", customerID, *bid.IngressPort, *bid.EgressPort))
+	slog.DebugContext(ctx, "Bid stored", "customer", customerID, "ingress", *bid.IngressPort, "egress", *bid.EgressPort, "units", *bid.Units, "price", *bid.UnitPrice)
 
 	attrs := metric.WithAttributes(
 		attribute.String("customer_id", customerID),
@@ -436,8 +598,10 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 	)
 
 	// Record the price and the units requested
+	slog.DebugContext(ctx, "Recording bid histogram metrics", "bid_price", *bid.UnitPrice, "bid_units", *bid.Units)
 	bidPriceHistogram.Record(ctx, int64(*bid.UnitPrice), attrs)
 	bidUnitHistogram.Record(ctx, int64(*bid.Units), attrs)
+	slog.DebugContext(ctx, "Bid histogram metrics recorded")
 
 	w.WriteHeader(http.StatusAccepted)
 	w.Write([]byte("bid accepted"))
@@ -445,35 +609,70 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 
 // GET /credits — returns total_spent and optionally starting_balance for the authenticated customer
 func (s *Server) getCredits(w http.ResponseWriter, r *http.Request) {
+	ctx, span := localotel.Tracer.Start(r.Context(), "get-credits")
+	defer span.End()
+
 	if r.Method != http.MethodGet {
+		span.SetStatus(codes.Error, "method-not-allowed")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	customerToken := customerIDFromRequest(r)
+	span.SetAttributes(attribute.String("customer_id", customerToken))
 	if customerToken == "" {
+		span.SetStatus(codes.Error, "missing-customer-identity")
 		http.Error(w, "missing customer identity: set X-Customer-ID or Authorization: Bearer <customer_id>", http.StatusUnauthorized)
 		return
 	}
 
-	cred, err := s.cs.Get(r.Context(), customerToken)
+	// Check if credits store is available
+	if s.cs == nil {
+		slog.ErrorContext(ctx, "Atomix store unavailable", "operation", "read_credits")
+		span.SetStatus(codes.Error, "atomix-unavailable")
+		http.Error(w, "credits store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Add context timeout for Atomix operation to prevent goroutine starvation
+	atomixCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	startAtomixTime := time.Now()
+	cred, err := s.cs.Get(atomixCtx, customerToken)
+	recordAtomixLatency(context.Background(), "read_credits", startAtomixTime, err)
+
 	if err != nil {
+		slog.ErrorContext(ctx, "credits store read failed", "operation", "read_credits", "customer_id", customerToken, "error", err)
+		span.SetStatus(codes.Error, "error-fetching-credits")
+		span.RecordError(err)
 		http.Error(w, fmt.Sprintf("error fetching credits: %v", err), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(cred)
+	if err := json.NewEncoder(w).Encode(cred); err != nil {
+		span.SetStatus(codes.Error, "error-encoding-credits-response")
+		span.RecordError(err)
+		http.Error(w, "error encoding response", http.StatusInternalServerError)
+		return
+	}
 }
 
 // GET /auctions?egress_port=0 — returns auction history (clearing prices and own allocations) for the authenticated customer.
 func (s *Server) getAuctions(w http.ResponseWriter, r *http.Request) {
+	ctx, span := localotel.Tracer.Start(r.Context(), "get-auctions")
+	defer span.End()
+
 	if r.Method != http.MethodGet {
+		span.SetStatus(codes.Error, "method-not-allowed")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	customerID := customerIDFromRequest(r)
+	span.SetAttributes(attribute.String("customer_id", customerID))
 	if customerID == "" {
+		span.SetStatus(codes.Error, "missing-customer-identity")
 		http.Error(w, "missing customer identity: set X-Customer-ID or Authorization: Bearer <customer_id>", http.StatusUnauthorized)
 		return
 	}
@@ -482,14 +681,35 @@ func (s *Server) getAuctions(w http.ResponseWriter, r *http.Request) {
 	if egressStr := r.URL.Query().Get("egress_port"); egressStr != "" {
 		v, err := strconv.ParseUint(egressStr, 10, 64)
 		if err != nil {
+			span.SetStatus(codes.Error, "invalid-egress-port")
+			span.RecordError(err)
 			http.Error(w, "invalid egress_port: must be an integer", http.StatusBadRequest)
 			return
 		}
 		filterEgress = v
 	}
+	span.SetAttributes(attribute.Int64("egress_port_filter", int64(filterEgress)))
 
-	keys, err := s.hs.List(r.Context())
+	// Check if auction history store is available
+	if s.hs == nil {
+		slog.ErrorContext(ctx, "Atomix store unavailable", "operation", "read_auctions")
+		span.SetStatus(codes.Error, "atomix-unavailable")
+		http.Error(w, "auction history store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Add context timeout for Atomix operation to prevent goroutine starvation
+	atomixCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	startAtomixTime := time.Now()
+	keys, err := s.hs.List(atomixCtx)
+	recordAtomixLatency(context.Background(), "read_auctions", startAtomixTime, err)
+
 	if err != nil {
+		slog.ErrorContext(ctx, "auction history list failed", "operation", "read_auctions", "error", err)
+		span.SetStatus(codes.Error, "error-listing-auction-history")
+		span.RecordError(err)
 		http.Error(w, fmt.Sprintf("error listing auction history: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -497,13 +717,20 @@ func (s *Server) getAuctions(w http.ResponseWriter, r *http.Request) {
 	var out []shared.AuctionHistoryRecord
 
 	for _, key := range keys {
-		raw, err := s.hs.Get(r.Context(), key)
+		startAtomixTime := time.Now()
+		raw, err := s.hs.Get(atomixCtx, key)
+		recordAtomixLatency(context.Background(), "read_auctions_item", startAtomixTime, err)
+
 		if err != nil || raw == "" {
+			if err != nil {
+				slog.ErrorContext(ctx, "auction history read failed", "operation", "read_auctions", "key", key, "error", err)
+				span.RecordError(err)
+			}
 			continue
 		}
 		var rec shared.AuctionHistoryRecord
 		if err := json.Unmarshal([]byte(raw), &rec); err != nil {
-			log.Printf("failed to unmarshal auction history %s: %v", key, err)
+			slog.ErrorContext(ctx, "failed to unmarshal auction history", "key", key, "error", err)
 			continue
 		}
 		if filterEgress != 0 && rec.EgressPort != filterEgress {
@@ -525,7 +752,12 @@ func (s *Server) getAuctions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	if err := json.NewEncoder(w).Encode(out); err != nil {
+		span.SetStatus(codes.Error, "error-encoding-auctions-response")
+		span.RecordError(err)
+		http.Error(w, "error encoding response", http.StatusInternalServerError)
+		return
+	}
 }
 
 // ============================================================
@@ -592,13 +824,13 @@ func validateBid(ctx context.Context, bid shared.BidRequest) error {
 		return fmt.Errorf("egress_port is required")
 	}
 	if bid.Units == nil {
-		span.SetStatus(codes.Error, "unit is required")
-		slog.ErrorContext(ctx, "unit is required")
+		span.SetStatus(codes.Error, "units is required")
+		slog.ErrorContext(ctx, "units is required")
 		return fmt.Errorf("units is required")
 	}
 	if bid.UnitPrice == nil {
-		span.SetStatus(codes.Error, "unit price is required")
-		slog.ErrorContext(ctx, "unit price is required")
+		span.SetStatus(codes.Error, "unit_price is required")
+		slog.ErrorContext(ctx, "unit_price is required")
 		return fmt.Errorf("unit_price is required")
 	}
 	if *bid.Units <= 0 {

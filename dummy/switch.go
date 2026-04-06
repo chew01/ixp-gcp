@@ -13,12 +13,14 @@ import (
 )
 
 type DummySwitch struct {
-	reader *kafka.Reader
+	reader      *kafka.Reader
+	allocations *AllocationTable
 }
 
-func NewDummySwitch(reader *kafka.Reader) *DummySwitch {
+func NewDummySwitch(reader *kafka.Reader, allocations *AllocationTable) *DummySwitch {
 	return &DummySwitch{
-		reader: reader,
+		reader:      reader,
+		allocations: allocations,
 	}
 }
 
@@ -41,6 +43,7 @@ func (s *DummySwitch) Run(ctx context.Context) {
 			continue
 		}
 
+		s.allocations.Set(record.IngressPort, record.EgressPort, record.BandwidthKbps)
 		configsAccepted.Add(ctx, 1)
 		log_msg := fmt.Sprintf("Auction result: %d kbps (%d->%d)", record.BandwidthKbps, record.IngressPort, record.EgressPort)
 		slog.DebugContext(ctx, log_msg,

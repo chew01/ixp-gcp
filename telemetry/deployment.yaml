@@ -22,12 +22,23 @@ spec:
             value: "ixp-kafka-kafka-bootstrap:9092"
           - name: SCENARIO_PATH
             value: /etc/scenario/scenario.yaml
+          - name: OTEL_SERVICE_NAME
+            value: telemetry-service
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: "otel-collector-opentelemetry-collector.observability.svc.cluster.local:4317"
         volumeMounts:
           - name: scenario-volume
             mountPath: /etc/scenario
+            readOnly: true
+          - name: kafka-tls
+            mountPath: /etc/kafka-tls
             readOnly: true
 
       volumes:
         - name: scenario-volume
           configMap:
             name: test-scenario
+        - name: kafka-tls
+          secret:
+            secretName: kafka-tls
+            optional: true

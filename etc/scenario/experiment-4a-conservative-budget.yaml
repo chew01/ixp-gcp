@@ -1,0 +1,48 @@
+version: v1
+name: experiment-4a-conservative-budget
+
+# Experiment 4 — Budget Awareness and Credit Exhaustion  (Run A: conservative)
+#
+# Both agents use conservative with a finite starting_balance of 5000 credits.
+# Traffic at 11 kbps/flow (110 kbps total) slightly exceeds capacity, creating
+# continuous competition that drains credits steadily.
+#
+# Conservative bids max(reservation, lastClearing). Because clearing is stuck at
+# reservation_price (the fixed point for this strategy in a 2-player game), both
+# agents spend reservation_price × allocation per round. Credits exhaust abruptly
+# after ~2 rounds; throughput drops to zero when balance cannot cover a round.
+#
+# Compare against 4b where both agents use budget_aware.
+#
+# Run duration: until exhaustion or 40 intervals (~20 minutes)
+# Export: make export-metrics
+
+auction_result_kafka_topic: auction-results
+telemetry_kafka_topic: switch-telemetry
+
+reservation_price: 50
+auction_interval: 30s
+telemetry_interval: 1s
+
+switches:
+  - id: sw-1
+    ingress_ports: [1,2,3,4,5,6,7,8,9,10]
+    egress_ports: [0]
+    max_capacity: 100
+
+traffic:
+  pattern: steady
+  rate_kbps: 11
+
+customers:
+  - id: as12345
+    switch_id: sw-1
+    ingress_ports: [1, 2, 3, 4, 5]
+    strategy: conservative
+    starting_balance: 5000
+
+  - id: as67890
+    switch_id: sw-1
+    ingress_ports: [6, 7, 8, 9, 10]
+    strategy: conservative
+    starting_balance: 5000

@@ -45,11 +45,17 @@ func main() {
 		)
 	}
 
+	tlsCfg, err := newKafkaTLSConfig()
+	if err != nil {
+		log.Fatalf("Kafka TLS config: %v", err)
+	}
+
 	writer := &kafka.Writer{
 		Addr:                   kafka.TCP(kafkaBootstrap),
 		Topic:                  scene.TelemetryKafkaTopic,
 		Balancer:               &kafka.LeastBytes{},
 		AllowAutoTopicCreation: true,
+		Transport:              kafkaTransport(tlsCfg),
 	}
 	defer writer.Close()
 
@@ -57,12 +63,14 @@ func main() {
 		Brokers: []string{kafkaBootstrap},
 		Topic:   scene.AuctionResultKafkaTopic,
 		GroupID: "dummy-switch",
+		Dialer:  kafkaDialer(tlsCfg),
 	})
 	defer reader.Close()
 
+	allocations := NewAllocationTable()
 	bidder := NewDummyBidder("http://api-gateway/bids", scene)
-	producer := NewDummyProducer(writer, scene)
-	sw := NewDummySwitch(reader)
+	producer := NewDummyProducer(writer, scene, allocations)
+	sw := NewDummySwitch(reader, allocations)
 
 	go producer.Run(ctx)
 

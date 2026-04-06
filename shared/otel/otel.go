@@ -61,6 +61,7 @@ func SetupOTelSDK(ctx context.Context) (func(context.Context) error, error) {
 		handleErr(err)
 		return shutdown, err
 	}
+
 	shutdownFuncs = append(shutdownFuncs, meterProvider.Shutdown)
 	otel.SetMeterProvider(meterProvider)
 
@@ -116,8 +117,8 @@ func newMeterProvider() (*metric.MeterProvider, error) {
 
 	meterProvider := metric.NewMeterProvider(
 		metric.WithReader(metric.NewPeriodicReader(metricExporter,
-			// Default is 1m. Set to 3s for demonstrative purposes.
-			metric.WithInterval(3*time.Second))),
+			// Default is 1m. Set to 1s for fast metrics export
+			metric.WithInterval(1*time.Second))),
 	)
 	return meterProvider, nil
 }

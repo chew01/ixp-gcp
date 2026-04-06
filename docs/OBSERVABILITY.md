@@ -290,6 +290,11 @@ Switch → Kafka telemetry → Telemetry Processor → Atomix flow store
 kubectl logs -n observability -l app.kubernetes.io/name=opentelemetry-collector \
   | grep "ixp\|received\|exported"
 
+# 1b. Verify the Atomix error counter name after OTel normalization
+# (can appear as ixp_api_atomix_errors_total, ixp_api_atomix_errors_total_total, etc.)
+kubectl port-forward -n observability svc/otel-collector-opentelemetry-collector 8889:8889
+curl -s http://localhost:8889/metrics | grep -E "ixp_api_atomix_errors.*total"
+
 # 2. Check if Prometheus scrapes OTEL Collector
 kubectl port-forward -n observability svc/observability-kube-prometheus-prometheus 9090:9090
 # Open http://localhost:9090/targets and look for "otel-collector"

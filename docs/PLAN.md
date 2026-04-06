@@ -52,7 +52,7 @@ This document is a step-by-step plan to extend the distributed SDN control plane
   - `ixp_flow_drop_rate_percent` (existing gauge; currently never set — now populate from stored value).
 - **Backward compatibility:** If the stored value is the old single number, parse it as `throughput_kbps` and set other metrics to 0 (or omit) so Prometheus and GET /flows still work during/after migration.
 
-### 1.4 Grafana / monitoring
+### 1.4 Grafana / observability
 
 - **File:** `observability/ixp-flows.json` (and any other dashboards).
 - Add panels for the new series: e.g. `ixp_flow_egress_kbps`, `ixp_flow_drop_kbps`, `ixp_flow_drop_rate_percent` where useful.

@@ -1,0 +1,49 @@
+version: v1
+name: experiment-3-heterogeneous
+
+# Experiment 3 — Heterogeneous Strategies: Priority Effect
+#
+# as12345 runs conservative; as67890 runs price_insensitive (10× reservation_price).
+# Traffic is steady at 11 kbps/flow (110 kbps total, 10% over 100 kbps capacity),
+# creating persistent congestion.
+#
+# Auction walk: price_insensitive bids ~11 units @ 500 (served first, 55 units used).
+# Conservative bids ~12 units @ 50 (marginal tier), proportionally rationed on the
+# remaining 45 units → ~9 kbps/flow, ~18% drop rate. Clearing price stays at 50.
+#
+# The externality: price_insensitive agents guarantee full allocation at no extra cost
+# (clearing price = 50 regardless), while conservative agents absorb all the drops.
+# Bidding high buys priority, not a higher price.
+#
+# Run duration: 20 auction intervals = 10 minutes
+# Export: make export-metrics
+
+auction_result_kafka_topic: auction-results
+telemetry_kafka_topic: switch-telemetry
+
+reservation_price: 50
+auction_interval: 30s
+telemetry_interval: 1s
+
+switches:
+  - id: sw-1
+    ingress_ports: [1,2,3,4,5,6,7,8,9,10]
+    egress_ports: [0]
+    max_capacity: 100
+
+traffic:
+  pattern: steady
+  rate_kbps: 11
+
+customers:
+  - id: as12345
+    switch_id: sw-1
+    ingress_ports: [1, 2, 3, 4, 5]
+    strategy: conservative
+
+  - id: as67890
+    switch_id: sw-1
+    ingress_ports: [6, 7, 8, 9, 10]
+    strategy: price_insensitive
+    strategy_params:
+      price_multiplier: "10"

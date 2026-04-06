@@ -29,10 +29,11 @@ import (
 )
 
 var (
-	auctionMetricsOnce            sync.Once
-	auctionRunsCounter            metric.Int64Counter
-	auctionRequestedUnitsCounter  metric.Int64Counter
-	auctionClearingPriceLatest    metric.Int64Gauge
+	auctionMetricsOnce           sync.Once
+	auctionRunsCounter           metric.Int64Counter
+	auctionRequestedUnitsCounter metric.Int64Counter
+	auctionClearingPriceLatest   metric.Int64Gauge
+	auctionErrorsCounter         metric.Int64Counter
 )
 
 // AuctionRunner owns the auction loop
@@ -44,6 +45,7 @@ type AuctionRunner struct {
 
 func New(writer *kafka.Writer, interval time.Duration, scenario *scenario.Scenario) *AuctionRunner {
 	initAuctionMetrics()
+	localotel.InitAtomixMetrics() // Initialize shared Atomix metrics
 	return &AuctionRunner{
 		writer:   writer,
 		interval: interval,
@@ -82,7 +84,23 @@ func initAuctionMetrics() {
 			slog.Error("failed to initialize auctionClearingPriceLatest", "error", err)
 		}
 
+		auctionErrorsCounter, err = localotel.Meter.Int64Counter(
+			"ixp.auction.errors.total",
+			metric.WithDescription("Critical dependency or logic errors"),
+			metric.WithUnit("1"),
+		)
+		if err != nil {
+			slog.Error("failed to initialize auctionErrorsCounter", "error", err)
+		}
+
 	})
+}
+
+func recordAuctionError(ctx context.Context, errorType string) {
+	if auctionErrorsCounter == nil {
+		return
+	}
+	auctionErrorsCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("error_type", errorType)))
 }
 
 func (r *AuctionRunner) Run(ctx context.Context) {
@@ -135,18 +153,25 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 	var bids []models.Bid
 
 	mapID := fmt.Sprintf("bids-%d", egressPort)
+	startAtomixTime := time.Now()
 	bidMap, err := atomix.Map[string, string](mapID).
 		Codec(generic.Scalar[string]()).
 		Get(auctionCtx)
+	localotel.RecordAtomixOperation(auctionCtx, "read_bids_map", startAtomixTime, err)
 	if err != nil {
+		recordAuctionError(auctionCtx, "atomix_bids_map_get_failed")
 		auctionSpan.SetStatus(codes.Error, "error getting bid map")
 		auctionSpan.RecordError(err)
 		msg := fmt.Sprintf("Error getting bid map: %v", err)
 		slog.ErrorContext(auctionCtx, msg, "error", err)
+		return
 	}
 
+	startAtomixTime = time.Now()
 	list, err := bidMap.List(auctionCtx)
+	localotel.RecordAtomixOperation(auctionCtx, "list_bids", startAtomixTime, err)
 	if err != nil {
+		recordAuctionError(auctionCtx, "atomix_bids_list_failed")
 		auctionSpan.SetStatus(codes.Error, "error listing bids")
 		auctionSpan.RecordError(err)
 		msg := fmt.Sprintf("Error listing bids: %v", err)
@@ -158,6 +183,7 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 		entry, err := list.Next()
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
+				recordAuctionError(auctionCtx, "atomix_bids_iterate_failed")
 				auctionSpan.SetStatus(codes.Error, "error getting next bid")
 				auctionSpan.RecordError(err)
 				msg := fmt.Sprintf("Error getting next bid: %v", err)
@@ -331,11 +357,13 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 	// Bill credits per customer.
 	// Bill credits: allocated_units * clearing_price per customer (grouped)
 	if err := r.updateCredits(auctionCtx, allocations, clearingPrice); err != nil {
+		recordAuctionError(auctionCtx, "atomix_credits_update_failed")
 		slog.ErrorContext(auctionCtx, fmt.Sprintf("Error updating credits: %v", err), "error", err)
 	}
 
 	// Store auction history, including clearing price and per-customer allocations.
 	if err := r.storeAuctionHistory(auctionCtx, intervalID, egressPort, clearingPrice, allocations); err != nil {
+		recordAuctionError(auctionCtx, "atomix_history_write_failed")
 		auctionSpan.SetStatus(codes.Error, "auction-history-store-failed")
 		auctionSpan.RecordError(err)
 		slog.ErrorContext(auctionCtx, fmt.Sprintf("Error storing auction history: %v", err), "error", err)
@@ -433,7 +461,9 @@ func (r *AuctionRunner) updateCredits(ctx context.Context, allocations []models.
 	}
 
 	for customerID, amount := range spendByCustomer {
+		startAtomixTime := time.Now()
 		entry, err := creditsMap.Get(ctx, customerID)
+		localotel.RecordAtomixOperation(ctx, "read_credits", startAtomixTime, err)
 		var cred shared.CustomerCredits
 		if err == nil && entry.Value != "" {
 			if err := json.Unmarshal([]byte(entry.Value), &cred); err != nil {
@@ -446,9 +476,12 @@ func (r *AuctionRunner) updateCredits(ctx context.Context, allocations []models.
 		if err != nil {
 			return fmt.Errorf("marshal credits: %w", err)
 		}
+		startAtomixTime = time.Now()
 		if _, err := creditsMap.Put(ctx, customerID, string(b)); err != nil {
+			localotel.RecordAtomixOperation(ctx, "write_credits", startAtomixTime, err)
 			return fmt.Errorf("update credits for %s: %w", customerID, err)
 		}
+		localotel.RecordAtomixOperation(ctx, "write_credits", startAtomixTime, nil)
 		log.Printf("[credits] %s spent %d (total %d)", customerID, amount, cred.TotalSpent)
 	}
 	return nil
@@ -485,9 +518,12 @@ func (r *AuctionRunner) storeAuctionHistory(ctx context.Context, intervalID stri
 	}
 
 	key := fmt.Sprintf("%s|%d", intervalID, egressPort)
+	startAtomixTime := time.Now()
 	if _, err := historyMap.Put(ctx, key, string(b)); err != nil {
+		localotel.RecordAtomixOperation(ctx, "write_auction_history", startAtomixTime, err)
 		return fmt.Errorf("put auction history for %s: %w", key, err)
 	}
+	localotel.RecordAtomixOperation(ctx, "write_auction_history", startAtomixTime, nil)
 
 	return nil
 }
