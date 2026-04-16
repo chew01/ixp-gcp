@@ -1,0 +1,68 @@
+version: v1
+name: experiment-7b-qlearning-convergence
+
+# Experiment 7B — Q-Learning Convergence to Dominant Strategy
+#
+# Goal: Does the Q-learner discover the dominant strategy (bidding near valuation)
+# through experience when its reward is utility-aligned?
+#
+# Setup:
+#   - as12345: q_learning with utility reward (valuation - clearing_price) × allocated_units
+#   - as67890: valuation_based (provides a stable utility baseline for comparison)
+#   - Same spike scenario as Experiment 7 (capacity=60) for comparability.
+#   - Extended duration (50+ intervals) to allow the Q-table to converge.
+#
+# Why capacity=60 matters:
+#   With capacity=90, as67890 only demands 65 units at spike (5 ports × 13 kbps),
+#   leaving 25 units that as12345 wins unconditionally regardless of bid price.
+#   The Q-learner would then learn to bid LOW (50 = reservation price) to minimise
+#   clearing price and maximise (500-50)×25 = 11250 utility — the opposite of
+#   the intended convergence. With capacity=60, as67890's demand (65) exceeds
+#   capacity, so as12345 wins allocation only when it bids competitively (≥500),
+#   providing the negative reinforcement needed to push bids toward valuation.
+#
+# Key graph to watch:
+#   - increase(ixp_agent_utility_total[30s]) for as12345 should trend upward over time
+#     toward the as67890 baseline as the Q-learner discovers that higher bid
+#     multipliers produce more utility.
+#   - ixp_customer_allocation_kbps: Q-learner's allocation should become more
+#     consistent as it converges toward bidding near valuation_per_unit.
+#
+# Run duration: 50 auction intervals = ~25 minutes
+# Export: make export-metrics
+
+auction_result_kafka_topic: auction-results
+telemetry_kafka_topic: switch-telemetry
+
+reservation_price: 50
+auction_interval: 30s
+telemetry_interval: 1s
+
+switches:
+  - id: sw-1
+    ingress_ports: [1,2,3,4,5,6,7,8,9,10]
+    egress_ports: [0]
+    max_capacity: 60
+
+traffic:
+  pattern: spike
+  rate_kbps: 9
+  spike_after_intervals: 5
+  spike_rate_kbps: 13
+
+customers:
+  - id: as12345
+    switch_id: sw-1
+    ingress_ports: [1, 2, 3, 4, 5]
+    strategy: q_learning
+    strategy_params:
+      ql_alpha: "0.1"
+      ql_gamma: "0.9"
+      ql_epsilon: "0.15"
+    valuation_per_unit: 500
+
+  - id: as67890
+    switch_id: sw-1
+    ingress_ports: [6, 7, 8, 9, 10]
+    strategy: valuation_based
+    valuation_per_unit: 500

@@ -5,10 +5,6 @@ package strategy
 type Conservative struct{}
 
 func (s Conservative) ComputeBid(ctx BidContext) (units uint64, price uint64, skip bool) {
-	if ctx.Metrics.ThroughputKbps <= 0 && ctx.Metrics.DropKbps <= 0 {
-		return 0, 0, true
-	}
-
 	unitsF := ctx.Metrics.ThroughputKbps * 1.1
 	if unitsF < 1 {
 		unitsF = 1

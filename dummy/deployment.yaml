@@ -16,8 +16,6 @@ spec:
       - name: dummy-producer
         image: dummy-producer:local
         env:
-        - name: KAFKA_BOOTSTRAP
-          value: "ixp-kafka-kafka-bootstrap:9092"
         - name: SCENARIO_PATH
           value: /etc/scenario/scenario.yaml
         - name: OTEL_SERVICE_NAME
@@ -50,5 +48,6 @@ spec:
   selector:
     app: dummy-producer
   ports:
-    - port: 50051
-      targetPort: 50051
+    - port: 5005
+      targetPort: 5005
+      name: metrics

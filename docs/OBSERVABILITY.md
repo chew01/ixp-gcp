@@ -291,9 +291,9 @@ kubectl logs -n observability -l app.kubernetes.io/name=opentelemetry-collector 
   | grep "ixp\|received\|exported"
 
 # 1b. Verify the Atomix error counter name after OTel normalization
-# (can appear as ixp_api_atomix_errors_total, ixp_api_atomix_errors_total_total, etc.)
+# (should appear as ixp_api_atomix_operation_errors_total)
 kubectl port-forward -n observability svc/otel-collector-opentelemetry-collector 8889:8889
-curl -s http://localhost:8889/metrics | grep -E "ixp_api_atomix_errors.*total"
+curl -s http://localhost:8889/metrics | grep -E "ixp_api_atomix_operation_errors.*total"
 
 # 2. Check if Prometheus scrapes OTEL Collector
 kubectl port-forward -n observability svc/observability-kube-prometheus-prometheus 9090:9090

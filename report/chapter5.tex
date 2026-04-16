@@ -1,0 +1,317 @@
+\section{Implementation Details}
+
+This chapter describes how the observability framework is implemented in the global control plane, focusing on instrumentation, alerting components, and deployment resources. Evaluation outcomes are deferred to the next chapter.
+
+\subsection{Implementation Scope}
+
+Implementation scope mirrors Chapter 3 boundaries: API Gateway, Auction Runner, and Telemetry Processor are instrumented; local-control-plane enforcement and data-plane internals remain external.
+
+\subsection{Go Microservice Instrumentation}
+
+The instrumentation is implemented in a shared bootstrap layer and then consumed consistently by each service entry point. Instead of duplicating setup logic per service, the code uses \texttt{shared/otel/otel.go} and \texttt{shared/otel/otel-init.go} as the common initialization path.
+
+\subsubsection{Shared OpenTelemetry Bootstrap (\texttt{otel.go})}
+
+The shared bootstrap configures OTLP exporters for traces, metrics, and logs, registers global providers, and returns a shutdown function used by all services.
+
+\begin{minted}[fontsize=\small,breaklines]{go}
+func SetupOTelSDK(ctx context.Context) (func(context.Context) error, error) {
+    endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+    if endpoint == "" {
+        endpoint = "localhost:4317"
+    }
+
+    tracerProvider, _ := newTracerProvider(endpoint)
+    otel.SetTracerProvider(tracerProvider)
+
+    meterProvider, _ := newMeterProvider(endpoint)
+    otel.SetMeterProvider(meterProvider)
+
+    loggerProvider, _ := newLoggerProvider(endpoint)
+    global.SetLoggerProvider(loggerProvider)
+
+    return shutdown, err
+}
+\end{minted}
+
+The implementation uses a short periodic metric export interval and a timeout-bounded exporter setup to reduce startup hangs and make observability behavior easier to debug during development.
+
+\subsubsection{Shared Instrument Binding (\texttt{otel-init.go})}
+
+After SDK setup, the code binds package-level logger, tracer, and meter handles to the active service name so each service emits under a stable identity.
+
+\begin{minted}[fontsize=\small,breaklines]{go}
+var (
+    Logger *slog.Logger = slog.Default()
+    Tracer trace.Tracer = otel.Tracer("ixp-default")
+    Meter  metric.Meter = otel.Meter("ixp-default")
+)
+
+func InitInstruments() {
+    serviceName := os.Getenv("OTEL_SERVICE_NAME")
+    if serviceName == "" {
+        serviceName = "ixp-service"
+    }
+    Logger = otelslog.NewLogger(serviceName)
+    Tracer = otel.Tracer(serviceName)
+    Meter = otel.Meter(serviceName)
+    slog.SetDefault(Logger)
+}
+\end{minted}
+
+\subsubsection{Service Startup Pattern Across API, Auction, and Telemetry}
+
+All three services follow the same startup sequence: initialize the OpenTelemetry SDK, bind the service-scoped instruments, register domain metrics, register dependency metrics, and then defer shutdown flushing. The key implementation point is not the boilerplate itself, but the fact that observability is initialized before request handling or message processing begins. This keeps the service startup order consistent while matching each service's actual dependencies: the API Gateway tracks Atomix; the Auction Runner tracks Atomix and Kafka; and the Telemetry Processor tracks Kafka and Atomix.
+
+\subsubsection{General Tracing and Logging Implementation Pattern}
+
+To keep observability balanced across signals, each critical operation follows a repeatable trace-and-log pattern: start a span, execute the dependency call with a bounded context, record span status, emit a structured error log on failure, and end the span. The same pattern is applied at API handlers, auction interval execution, and telemetry consume/process/write paths, so Jaeger and Loki can be used together to confirm the same incident from different angles.
+
+\subsubsection{Trace Context Propagation Across Bid Write and Auction Read}
+
+To preserve causal trace continuity across asynchronous shared-state handoff, the implementation propagates trace context through the Atomix bid map. During API bid submission, the active request context is injected as a W3C \texttt{traceparent} string and stored with the bid value. The stored payload format is \texttt{units|unitPrice|traceparent|customerID}.
+
+This design is required because the span model for bid submission and auction processing is different. Bid submission spans are request-scoped and short-lived (API handler path), while auction processing spans are interval-scoped and created later by the Auction Runner loop. In other words, the auction processing span is not a direct child of the original API bid span in a single synchronous execution tree.
+
+To bridge that gap, the implementation stores \texttt{traceparent} with bid state and reconstructs linkage at read time. The Auction Runner then creates a processing span with \texttt{trace.WithLinks(...)} so Jaeger can show causal reference back to the originating bid trace even though execution is decoupled in time and component boundaries.
+
+During auction execution, the runner reads bid entries from Atomix, extracts \texttt{traceparent}, reconstructs a remote span context, and creates a linked processing span for each bid. This design does not rely on direct remote procedure call (RPC) between API Gateway and Auction Runner; instead, causal linkage is recovered from the shared store payload at read time.
+
+\begin{minted}[fontsize=\small,breaklines]{go}
+// API write path: inject trace context before Atomix put
+carrier := make(localotel.StringMapCarrier)
+otel.GetTextMapPropagator().Inject(ctx, carrier)
+traceParent := carrier["traceparent"]
+value := fmt.Sprintf("%d|%d|%s|%s", *bid.Units, *bid.UnitPrice, traceParent, customerID)
+
+// Auction read path: extract and link to bid-processing span
+carrier := localotel.StringMapCarrier{"traceparent": valueParts[2]}
+extractedCtx := otel.GetTextMapPropagator().Extract(auctionCtx, carrier)
+remoteSpanCtx := trace.SpanContextFromContext(extractedCtx)
+bidCtx, bidSpan := localotel.Tracer.Start(auctionCtx, "process-individual-bid",
+  trace.WithLinks(trace.Link{SpanContext: remoteSpanCtx}))
+\end{minted}
+
+This mechanism enables Jaeger-level correlation from API bid intake to auction-side processing spans and is used as a primary trace evidence path in Chapter 6 scenario analysis.
+
+The same implementation philosophy applies to business-logic metrics. The code records counters for control-plane behaviors such as auction intervals with no bids and Atomix operation failures, so the system can raise an early warning based on application semantics rather than infrastructure health alone. In incident analysis, these metrics are then interpreted alongside traces and logs to speed up localization and verification.
+
+\subsubsection{Metric Declaration Examples}
+
+The implementation uses explicit service-scoped counters and histograms rather than relying only on generic runtime metrics. The telemetry service tracks flows consumed, flows processed, flow metrics published, and Kafka consumer errors; the Auction Runner tracks auction rounds, no-bid intervals, requested units, and Kafka produce errors; and the API Gateway tracks policy violations together with Atomix dependency metrics. The naming convention is service-prefixed so that Prometheus alerts can map each signal back to its fault domain without ambiguity.
+
+\subsection{Fail-Safe Atomix Client Error Handling}
+
+The Atomix client path is one of the most critical parts of the implementation because it sits on the request path for bid writes, auction state reads, and flow lookups. The client logic therefore uses explicit deadlines and error classification so that dependency failures are visible without stalling the application.
+
+The shared Atomix helper records both latency and failure counts for each dependency call, and the services invoke it at the boundary where state is read or written. The implementation follows three rules:
+
+\begin{itemize}
+    \item external calls use bounded contexts so requests fail fast when Atomix is slow or unavailable;
+    \item failures are classified into meaningful categories such as timeout, connection, unavailable, and other;
+    \item each failure records both a latency observation and an error counter increment so congestion and outright failure can be distinguished.
+\end{itemize}
+
+This approach ensures that the observability pipeline records soft failures even when the service itself continues running.
+
+\subsection{Kafka Consumer and Producer Error Handling}
+
+Services that interact with Kafka (Telemetry Processor consuming flow updates, Auction Runner producing results) require similar error tracking to Atomix. A shared helper in \texttt{shared/otel/kafka\_metrics.go} parallels the Atomix pattern: recording both latency and categorized errors for each Kafka operation.
+
+\texttt{InitKafkaMetrics(serviceName)} creates service-scoped counters for producer and consumer errors. Kafka operations are wrapped in the same way as Atomix operations, with latency measurement and error classification for timeout, connection, broker, offset, and validation failures. This keeps the alerting and debugging model consistent across dependency domains: a Kafka outage shows up as an observable dependency problem rather than an unstructured application crash.
+
+\subsection{Observability Pipeline Setup}
+
+The observability pipeline is built around a centralized OpenTelemetry Collector that receives telemetry from all in-scope services and forwards it to the downstream backends.
+
+\subsubsection{OpenTelemetry Collector Configuration}
+
+The collector receives OTLP data from the Go services and exports it to the appropriate backends for each signal type.
+
+\begin{itemize}
+    \item Metrics are exported to Prometheus for alert evaluation.
+    \item Traces are exported to Jaeger for span-level investigation.
+    \item Logs are exported to Loki for event correlation.
+\end{itemize}
+
+In deployment, the collector routing is defined in \texttt{helm/opentelemetry-collector/values.yaml}. The essential pipeline configuration is shown below:
+
+\begin{minted}[fontsize=\small,breaklines]{yaml}
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+  processors:
+    batch:
+      timeout: 1s
+      send_batch_size: 512
+
+  exporters:
+    otlp/jaeger:
+      endpoint: jaeger.observability.svc.cluster.local:4317
+      tls:
+        insecure: true
+    otlphttp/loki:
+      endpoint: http://loki.observability.svc.cluster.local:3100/otlp
+    prometheus:
+      endpoint: 0.0.0.0:8889
+
+  service:
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [batch]
+        exporters: [otlp/jaeger]
+      logs:
+        receivers: [otlp]
+        processors: [batch]
+        exporters: [otlphttp/loki]
+      metrics:
+        receivers: [otlp]
+        processors: [batch]
+        exporters: [prometheus]
+\end{minted}
+
+This explicit receiver-processor-exporter structure is important for reproducibility: it shows exactly how telemetry leaves service code and reaches each backend. In Chapter 6 scenarios, when alerts fire (or fail to fire), this configuration is the first place to verify whether metrics are reaching Prometheus correctly.
+
+\subsubsection{Prometheus ServiceMonitors and PromQL Alert Rules}
+
+Prometheus scrapes the collector and evaluates the alert rules defined for API availability, Atomix dependency health, latency congestion, and telemetry continuity. The rules are organized by service and failure semantics rather than by low-level metric origin.
+
+The concrete alert definitions are stored in \texttt{observability/alerts-ixp.yaml} as a \texttt{PrometheusRule} resource. Alert routing, grouping, inhibition, and Telegram delivery configuration are stored in \texttt{observability/values.yaml} under the \texttt{alertmanager.config} section. During deployment, these two files are applied through:
+
+\begin{minted}[fontsize=\small,breaklines]{bash}
+kubectl apply -f observability/alerts-ixp.yaml
+
+helm upgrade --install observability prometheus-community/kube-prometheus-stack \
+    -n observability --create-namespace \
+    -f observability/values.yaml
+\end{minted}
+
+This file-level mapping makes the firing path explicit: Prometheus evaluates rules from \texttt{alerts-ixp.yaml}, and Alertmanager behavior from \texttt{values.yaml} then determines grouping, suppression, and Telegram notification.
+
+Representative alert rules from \texttt{observability/alerts-ixp.yaml} are shown below.
+
+\textbf{Replica availability mismatch (Kubernetes availability signal):}
+\begin{minted}[fontsize=\small,breaklines]{yaml}
+- alert: IXPApiGatewayUnavailable
+  expr: kube_deployment_status_replicas_available{namespace="default",deployment="api-gateway"}
+        < kube_deployment_spec_replicas{namespace="default",deployment="api-gateway"}
+  for: 15s
+\end{minted}
+
+\textbf{Atomix dependency-chain failure (application dependency signal):}
+\begin{minted}[fontsize=\small,breaklines]{yaml}
+- alert: IXPAtomixOperationFailuresCritical
+  expr: sum(rate(ixp_api_atomix_operation_errors_total{operation!="bootstrap"}[1m])) > 0
+  for: 5s
+\end{minted}
+
+\textbf{Telemetry Kafka pipeline degradation (data pipeline signal):}
+\begin{minted}[fontsize=\small,breaklines]{yaml}
+- alert: IXPTelemetryKafkaConsumerErrors
+  expr: sum(increase(ixp_telemetry_kafka_consumer_errors_total[5m])) > 10
+  for: 2m
+\end{minted}
+
+Together, these examples show the layered rule strategy used in this project: platform availability, control-plane dependency health, and pipeline continuity.
+
+This organization makes the alerting logic easier to read and easier to map back to operators' mental model of the system:
+
+\begin{itemize}
+    \item API Gateway alerts track request failures and Atomix access failures.
+    \item Auction Runner alerts track auction progress and downstream dependency issues.
+    \item Telemetry Processor alerts track Kafka consumption and Atomix write behavior.
+\end{itemize}
+
+The PromQL expressions are intentionally kept simple enough to be explained in the thesis while remaining expressive enough to detect soft failures before complete service breakdown.
+
+\subsubsection{Telegram Bot Integration Setup}
+
+Telegram routing is configured directly in the Helm values file used to deploy \texttt{kube-prometheus-stack}. In this project, the relevant configuration is stored under \texttt{observability/values.yaml} in the \texttt{alertmanager} section.
+
+The following excerpt shows how the receiver and routing rules are defined:
+
+\begin{minted}[fontsize=\small,breaklines]{yaml}
+alertmanager:
+  alertmanagerSpec:
+    secrets:
+      - alertmanager-telegram-secret
+
+  config:
+    global:
+      resolve_timeout: 5m
+
+    route:
+      receiver: "null"
+      group_by: ["component", "signal", "severity"]
+      group_wait: 20s
+      group_interval: 10m
+      repeat_interval: 4h
+      routes:
+        - receiver: "telegram"
+          matchers:
+            - 'alertname =~ "^IXP.*"'
+            - 'severity =~ "warning|critical"'
+
+    receivers:
+      - name: "null"
+      - name: "telegram"
+        telegram_configs:
+          - bot_token_file: /etc/alertmanager/secrets/alertmanager-telegram-secret/bot-token
+            chat_id: 6269922199
+            parse_mode: HTML
+            send_resolved: true
+
+    inhibit_rules:
+      - source_matchers: ["severity = critical"]
+        target_matchers: ["severity = warning"]
+        equal: ["component"]
+      - source_matchers:
+          - 'alertname =~ "IXPAtomix(OperationFailuresCritical|NearTotalFailure|CriticalFailureRate|TotalFailureImminent)"'
+        target_matchers:
+          - 'alertname =~ "IXPTelemetryLowFlowConsumption|IXPAuctionNoBidsAcrossIntervals|IXPAPIGatewayHighErrorRateWarning|IXPAPIGatewaySuccessRateLow"'
+        equal: []
+\end{minted}
+
+The routing behavior is intentionally narrow. The top-level receiver is set to \texttt{"null"} so unrelated alerts are dropped by default, while a child route forwards only project-scoped alerts with warning or critical severity. Alertmanager then groups notifications by component/signal/severity and applies inhibition rules so critical root-cause alerts suppress lower-priority symptom alerts.
+
+\begin{itemize}
+    \item \textbf{Grouping}: related alerts are batched before Telegram delivery to reduce message bursts.
+    \item \textbf{Inhibition}: warning alerts are suppressed when a matching critical alert is already firing for the same component.
+    \item \textbf{Root-cause precedence}: Atomix critical outages suppress expected secondary symptoms (for example low telemetry flow consumption) during the same incident window.
+\end{itemize}
+
+This configuration reduces notification noise and keeps Telegram focused on incidents tied to thesis scenarios. It also establishes a deterministic notification policy for evaluation: if an experiment triggers an \texttt{IXP*} rule with warning or critical severity and is not inhibited, the notification path is Prometheus $\rightarrow$ Alertmanager $\rightarrow$ Telegram.
+
+The bot token is injected through a Kubernetes secret referenced by \texttt{alertmanagerSpec.secrets}:
+
+\begin{minted}[fontsize=\small,breaklines]{bash}
+kubectl -n observability create secret generic alertmanager-telegram-secret \
+    --from-literal=bot-token='<telegram-bot-token>'
+\end{minted}
+
+After updating \texttt{observability/values.yaml}, the stack is applied with Helm so Alertmanager picks up the Telegram receiver configuration:
+
+\begin{minted}[fontsize=\small,breaklines]{bash}
+helm upgrade --install observability prometheus-community/kube-prometheus-stack \
+    -n observability --create-namespace \
+    -f observability/values.yaml
+\end{minted}
+
+This integration serves two purposes: validating end-to-end alert propagation through Prometheus and Alertmanager, and providing the operator-visible notification channel used in the alert-firing demonstrations in Chapter 6.
+
+\subsection{Deployment Configuration (Kubernetes Manifests and Helm)}
+
+The observability components are deployed alongside the application services using Kubernetes manifests and Helm values. This includes the OpenTelemetry Collector, Prometheus, Alertmanager, and the supporting monitoring resources required for scraping and rule evaluation.
+
+The deployment is structured so that the observability stack can be updated independently of the application services when metric names or alert rules change. That separation is important because the thesis implementation iterated on alert definitions several times as the failure scenarios were refined. In the context of this chapter, the important point is simply that the collector, alert rules, and notification path are deployed as first-class observability infrastructure rather than being embedded into the application manifests.
+
+\subsection{Summary}
+
+The implementation combines service instrumentation, dependency-aware error handling, metric export, alert routing, and repeatable validation scripts into a single observability stack. Together, these components provide the operational basis for the evaluation scenarios that follow.

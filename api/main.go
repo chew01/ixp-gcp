@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -87,7 +88,10 @@ func run() error {
 		slog.Warn("Failed to initialize auction history store (Atomix unavailable?)", "error", err)
 		hs = nil
 	}
-
+	us, err := NewAtomixUtilityStore(ctx)
+	if err != nil {
+		slog.ErrorContext(ctx, fmt.Sprintf("failed to create utility store: %v", err), "err", err)
+	}
 	// Ensure every customer from the scenario has a credits entry (total_spent=0) so GET /credits and Prometheus show them from the start.
 	// Skip if credits store is unavailable.
 	if cs != nil {
@@ -108,10 +112,12 @@ func run() error {
 		bs:       bs,
 		cs:       cs,
 		hs:       hs,
+		us:       us,
 		scenario: scen,
 	}
 
 	server.InitServerMetrics()
+	localotel.InitAtomixMetrics("api")
 
 	// 3. Main API Mux (Port 8080)
 	appMux := http.NewServeMux()

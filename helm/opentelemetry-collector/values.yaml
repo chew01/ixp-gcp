@@ -102,3 +102,6 @@ serviceMonitor:
   interval: 10s
   scrapeTimeout: 10s
   relabelings: []
+  endpoints:
+    - port: prometheus
+      interval: 30s

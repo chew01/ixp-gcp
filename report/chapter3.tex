@@ -1,0 +1,133 @@
+\section{System Design and Architecture}
+
+This chapter describes the system architecture used in this project. The main focus is the \textbf{global control plane} and the telemetry around it. The local control plane and data plane are treated as external boundaries: they are part of the full system, but they are not instrumented in this project.
+
+\subsection{High-Level Architecture Overview}
+
+The system is organized into three parts:
+
+\begin{itemize}
+    \item \textbf{Global control plane}: API Gateway, Auction Runner, Telemetry Processor, and shared state managed by Atomix.
+    \item \textbf{Local control plane (external boundary)}: consumes clearing outputs and applies enforcement decisions toward switch-facing functions.
+    \item \textbf{Data plane (external boundary)}: physical switching and metering behavior that produces traffic counters.
+\end{itemize}
+
+\begin{figure}[h]
+    \centering
+    \IfFileExists{fyp-full-architecture.pdf}{
+        \includegraphics[width=0.95\linewidth]{fyp-full-architecture.pdf}
+    }{
+        \fbox{\parbox{0.9\linewidth}{\centering
+        Placeholder for the full relevant FYP architecture diagram.\\
+        }}
+    }
+    \caption{Full system architecture of the Software Defined Network (SDN) bandwidth auction platform}
+    \label{fig:fyp-full-architecture}
+\end{figure}
+
+Within project scope, this chapter covers the part of the system we observe: bids, auctions, shared state, and the flow and account data served to agents.
+
+The services communicate in three ways:
+
+\begin{itemize}
+    \item \textbf{Synchronous REST}: customer agents call API endpoints for bids, credits, auction snapshots, and flow reads.
+    \item \textbf{Asynchronous events via Kafka}: the Auction Runner publishes clearing outputs to Kafka, and the Telemetry Processor consumes telemetry messages from Kafka.
+    \item \textbf{Shared state via Atomix}: the services read and write shared maps to keep state aligned.
+\end{itemize}
+
+This split keeps responsibilities separate, but a slow service can still delay the rest of the control loop without causing a hard crash.
+
+\subsection{Control Plane Microservices}
+
+\subsubsection{API Gateway (Control Plane Ingress and Policy Enforcement)}
+
+The API Gateway is the entry point for control-plane requests. It validates bid submissions, serves flow and credit data, and reads and writes shared state.
+
+Because all agents pass through this service, it is where congestion and timeout issues show up first.
+
+\subsubsection{Auction Runner (Economic Engine)}
+
+The Auction Runner runs once per interval. It reads bids from Atomix, applies the auction algorithm, computes allocations and clearing prices, writes credits, utility, and auction history back to Atomix, clears the bid map, and publishes clearing outputs to Kafka.
+
+Its role is deterministic economic decision-making under time constraints:
+
+\begin{itemize}
+    \item \textbf{Input}: current-interval bids and static scenario constraints (capacity, eligibility, reservation logic).
+    \item \textbf{Computation}: sort/filter and allocate according to auction rules.
+    \item \textbf{Output}: clearing results and per-interval state updates for downstream consumers.
+\end{itemize}
+
+From a systems perspective, this component sets the pace of the control loop. If clearing slows down, the next interval starts later.
+
+\subsubsection{Telemetry Processor (Data Plane Bridge via Kafka)}
+
+The Telemetry Processor reads telemetry messages from Kafka, computes flow metrics, and writes the latest flow state to Atomix. This keeps the current flow data available to the API Gateway and agents.
+
+Its core responsibilities are:
+
+\begin{itemize}
+    \item \textbf{Stream ingestion}: consume telemetry messages from Kafka topics.
+    \item \textbf{State transformation}: derive flow metrics from raw event streams.
+    \item \textbf{State publication}: write the computed flow state into shared storage for API reads.
+\end{itemize}
+
+This service keeps the latest flow data available for later bidding rounds.
+
+\subsubsection{Distributed State Store (Atomix Integration)}
+
+Atomix stores the shared state for the global control plane. The project uses shared maps for bids, auction outputs, flow values, credits, utility, and auction history.
+
+Operationally, these shared maps are used as key-value stores. Services write state with operations equivalent to \texttt{put(key, value)} and retrieve state with \texttt{get(key)}, where keys represent control-plane entities (for example flow identifiers, auction interval keys, or customer IDs) and values hold the latest committed state. This key-value access pattern keeps inter-service coordination simple and predictable.
+
+The design rationale is operational correctness under distributed execution:
+
+\begin{itemize}
+    \item \textbf{Single logical source of truth}: services read the same committed state.
+    \item \textbf{Cross-service coordination}: API, auction, and telemetry paths share the same data structures.
+    \item \textbf{Failure tolerance}: replicated state reduces dependence on a single node.
+\end{itemize}
+
+Because many critical operations use Atomix, its latency affects the whole control loop.
+
+\subsection{Data and Event Flow Model}
+
+The system behavior can be summarized as three interacting data and event paths.
+
+\textbf{Path A: Bid Ingestion and Clearing}
+
+\begin{enumerate}
+    \item Customer agents submit bids through the API.
+    \item API Gateway validates and persists bid data to Atomix.
+    \item Auction Runner reads interval bids from shared state.
+    \item Auction Runner computes allocation and clearing price.
+    \item Clearing outputs are published to Kafka for downstream consumers.
+\end{enumerate}
+\textbf{Path B: Telemetry Update Path}
+
+\begin{enumerate}
+    \item Telemetry messages are ingested from Kafka.
+    \item Telemetry Processor derives flow metrics.
+    \item Updated flow state is written to Atomix.
+    \item API Gateway serves the refreshed values to agents.
+\end{enumerate}
+
+\textbf{Path C: Agent Decision Interaction}
+
+\begin{enumerate}
+    \item Agents read the latest flow and auction data.
+    \item Agents compute next bids using their strategy.
+    \item Updated bids are submitted through the API path.
+\end{enumerate}
+
+Together, these paths show how requests, state updates, and telemetry move through the global control plane.
+
+\subsection{Architecture Boundaries and Project Scope}
+
+To avoid overstating implementation coverage, this report distinguishes between observed and non-observed domains:
+
+\begin{itemize}
+    \item \textbf{In scope}: global control-plane services and their interfaces (API Gateway, Auction Runner, Telemetry Processor, Atomix integration, Kafka interactions from these services).
+    \item \textbf{Out of scope}: direct instrumentation of local control plane enforcement logic and data-plane switch internals.
+\end{itemize}
+
+Accordingly, later chapters focus on detecting degradation in the global control-plane loop and giving early warnings to operators. They do not claim full visibility into downstream enforcement internals.

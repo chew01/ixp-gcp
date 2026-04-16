@@ -15,11 +15,16 @@ spec:
           for: 15s
           labels:
             severity: critical
-            service: ixp
             component: api-gateway
           annotations:
             summary: "API gateway deployment unavailable"
-            description: "api-gateway has fewer available replicas than desired for at least 15s. available={{ $value }}"
+            description: |
+              Available replicas are below desired for at least 15s.
+              Observed available: {{ $value }}.
+              Suspected causes:
+              - Pod crash or failing readiness probe.
+              - Scheduling failure (insufficient resources, cordoned node).
+              - Ongoing rollout with unhealthy new pods.
 
     - name: ixp-system-health
       interval: 30s  # Evaluate every 30s for faster detection
@@ -32,78 +37,78 @@ spec:
         # get flows, and other critical operations.
 
         - alert: IXPAtomixOperationFailuresCritical
-          expr: sum(rate(ixp_atomix_operation_errors_total{operation!="bootstrap"}[1m])) > 0
+          expr: sum(rate(ixp_api_atomix_operation_errors_total{operation!="bootstrap"}[1m])) > 0
           for: 5s
           labels:
             severity: critical
-            service: ixp
             component: api-gateway
             signal: dependency-chain-broken
           annotations:
-            summary: "❌ Atomix store operation failures detected - DEPENDENCY CHAIN BROKEN"
+            summary: "Atomix operation failures detected"
             description: |
-              ⚠️ API Gateway detected Atomix operation errors.
-              This indicates the consensus store (dependency chain) is unavailable or failing.
-              
-              🔴 IMPACT: Place bids and get flows will fail
-              ❌ Error rate: {{ $value }}/sec (threshold: > 0)
-              
-              ACTION REQUIRED: Check Atomix store health and replicas
-              - Is the store still running? Run: kubectl get pods -n default | grep atomix
-              - Check pod logs: kubectl logs -n default <pod-name>
-              - Check store connectivity: kubectl exec -it <api-pod> -- curl -v <atomix-service>
+              API Gateway is reporting Atomix errors.
+              Error rate: {{ $value }}/sec.
+              Impact: bid and flow operations may fail.
+              Suspected causes:
+              - Consensus quorum loss (insufficient Atomix replicas after scale-down).
+              - Atomix leader unavailable or election instability.
+              - Atomix replicas down or not Ready.
+              - Connectivity issue between API and Atomix.
+              - Atomix overloaded.
 
         - alert: IXPAtomixNearTotalFailure
-          expr: rate(ixp_atomix_operation_errors_total{operation!="bootstrap"}[1m]) > 0.5
+          expr: rate(ixp_api_atomix_operation_errors_total{operation!="bootstrap"}[1m]) > 0.5
           for: 5s
           labels:
             severity: critical
-            service: ixp
             component: api-gateway
             signal: store-unavailable
           annotations:
-            summary: "🚨 Atomix store near COMPLETE FAILURE - {{ $value }} errors/sec"
+            summary: "Atomix near-total failure"
             description: |
-              🚨 CRITICAL: High error rate from Atomix operation failures detected!
-              This means bids cannot be placed and flows cannot be retrieved.
-              
-              ❌ Error rate: {{ $value }} per second (threshold: > 0.5)
-              
-              ACTION REQUIRED: Immediate intervention needed!
-              1. Check if Atomix store replicas were scaled down: kubectl get deployment -n default | grep atomix
-              2. Verify network connectivity: kubectl exec -it <api-pod> -- nc -zv <atomix-host> <atomix-port>
-              3. Check for resource exhaustion: kubectl top nodes
+              Atomix error rate is critically high.
+              Error rate: {{ $value }}/sec.
+              Impact: most control-plane operations are failing.
+              Suspected causes:
+              - Atomix scaled down or crashed.
+              - Cluster or network partition.
+              - Severe resource exhaustion.
 
         - alert: IXPAtomixConnectionErrors
-          expr: rate(ixp_atomix_operation_errors_total{error_type="connection"}[1m]) > 0
+          expr: sum(rate(ixp_api_atomix_operation_errors_total{error_type="connection"}[1m])) > 0
           for: 5s
           labels:
             severity: critical
-            service: ixp
             component: api-gateway
             signal: connectivity-broken
           annotations:
-            summary: "🔌 Atomix connection errors - NETWORK/STORE DOWN"
+            summary: "Atomix connection errors detected"
             description: |
-              Cannot connect to Atomix consensus store (connection errors detected).
-              This is likely a network issue or the store is completely down.
-              
-              ACTION REQUIRED:
-              1. Verify Atomix pods status: kubectl get pods -n default -l app=consensus-store
-              2. Check network policies: kubectl get networkpolicies -A
-              3. Verify Atomix service: kubectl get svc -n default | grep consensus-store
+              API cannot establish connections to Atomix.
+              Error rate: {{ $value }}/sec.
+              Suspected causes:
+              - Atomix service/pods unavailable.
+              - NetworkPolicy or DNS/connectivity issue.
+              - Atomix listener not accepting connections.
 
         - alert: IXPAtomixVeryHighLatencyCritical
-          expr: histogram_quantile(0.99, rate(ixp_atomix_operation_duration_milliseconds_bucket[2m])) > 1000
+          expr: histogram_quantile(0.99, sum by (le) (rate(ixp_api_atomix_operation_duration_milliseconds_bucket[2m]))) > 1000
           for: 15s
           labels:
             severity: critical
-            service: ixp
             signal: congestion
             component: api-gateway
           annotations:
-            summary: "🔥 Atomix p99 latency CRITICAL ({{ $value }}ms) - severe congestion"
-            description: "API Atomix operations p99 latency: {{ $value }}ms (threshold: 1000ms). Severe congestion detected across all operations. Immediate action required."
+            summary: "Atomix p99 latency critical"
+            description: |
+              Atomix p99 latency is {{ $value }}ms (threshold: 1000ms).
+              Impact: control decisions may miss deadlines.
+              Suspected causes:
+              - Consensus quorum degradation or unstable leader election.
+              - High request volume.
+              - Atomix under CPU or memory pressure.
+              - Network congestion.
+              - Atomix instance failure.
 
         # ============================================================
         # API Gateway Request Latency Monitoring
@@ -112,25 +117,309 @@ spec:
         # Uses HTTP server metrics automatically instrumented by otelhttp.NewHandler
 
         - alert: IXPAPIGatewayBidCongestion
-          expr: histogram_quantile(0.99, rate(http_server_duration_seconds_bucket{http_route="/bids",http_method="POST"}[2m])) > 0.5
-          for: 15s
+          expr: histogram_quantile(0.99, sum by (le) (rate(http_server_request_duration_seconds_bucket{exported_job="api-gateway",http_request_method="POST"}[2m]))) > 0.5
+          for: 5s
           labels:
             severity: warning
-            service: ixp
             signal: congestion
             component: api-gateway
           annotations:
-            summary: "⚠️ API Gateway POST /bids p99 latency WARNING ({{ $value }}s) - congestion detected"
-            description: "API Gateway POST /bids request p99 latency: {{ $value }}s (threshold: 0.5s). Possible high bidding volume causing congestion. Check request rate and consider adding backpressure."
+            summary: "API POST latency warning"
+            description: |
+              API POST p99 latency is {{ $value }}s (threshold: 0.5s).
+              Suspected causes:
+              - Bid traffic spike or spam.
+              - Upstream dependency slowdown.
+              - API resource saturation.
+
+        - alert: IXPAPIGatewayBidRateHigh
+          expr: sum(rate(ixp_bid_submitted_total[1m])) > 8.33
+          for: 5s
+          labels:
+            severity: critical
+            signal: potential-ddos
+            component: api-gateway
+          annotations:
+            summary: "API DDoS attack suspected - bid flood detected"
+            description: |
+              Bid submission rate is {{ $value }}/sec (threshold: >8.33/sec = 500/min).
+              Impact: potential DDoS or malicious bid flooding attack detected.
+              Action: investigate source customer IDs and originating ports immediately.
+              Suspected causes:
+              - DDoS attack on bid endpoint.
+              - Compromised customer launching bid spam.
+              - Malicious flood from unauthorized source.
 
         - alert: IXPAPIGatewayBidHighLatencyCritical
-          expr: histogram_quantile(0.99, rate(http_server_duration_seconds_bucket{http_route="/bids",http_method="POST"}[2m])) > 1.0
+          expr: histogram_quantile(0.99, sum by (le) (rate(http_server_request_duration_seconds_bucket{exported_job="api-gateway",http_request_method="POST"}[2m]))) > 1.0
+          for: 5s
+          labels:
+            severity: critical
+            signal: congestion
+            component: api-gateway
+          annotations:
+            summary: "API POST latency critical"
+            description: |
+              API POST p99 latency is {{ $value }}s (threshold: 1.0s).
+              Impact: POST path is severely delayed.
+              Suspected causes:
+              - Sustained bid spam load.
+              - Atomix dependency congestion.
+              - API pod CPU/memory pressure.
+
+    # ============================================================
+    # Service Availability via Error Rates
+    # ============================================================
+    # Real availability detection: based on actual request success/failures
+    # rather than deployment replicas (which can be up but unresponsive)
+
+    - name: ixp-service-availability
+      interval: 30s
+      rules:
+        - alert: IXPAPIGatewayHighErrorRateCritical
+          # 5xx error rate > 5% for 10s = service severely degraded
+          expr: |
+            (
+              sum(rate(http_server_responses_total{job="api-gateway",http_status=~"5.."}[2m]))
+              /
+              sum(rate(http_server_responses_total{job="api-gateway"}[2m]))
+            ) > 0.05
           for: 10s
           labels:
             severity: critical
-            service: ixp
-            signal: congestion
+            signal: service-unavailable
             component: api-gateway
           annotations:
-            summary: "🔥 API Gateway POST /bids p99 latency CRITICAL ({{ $value }}s) - severe congestion"
-            description: "API Gateway POST /bids request p99 latency: {{ $value }}s (threshold: 1.0s). CRITICAL congestion on bid placement. Requests are severely delayed. Immediate action required."
+            summary: "API high 5xx error rate"
+            description: |
+              API 5xx rate is {{ $value | humanizePercentage }} (threshold: 5%).
+              Impact: service is degraded and requests are failing.
+              Suspected causes:
+              - Dependency outage (Atomix or Kafka).
+              - API runtime failure.
+              - Resource exhaustion.
+
+        - alert: IXPAPIGatewayHighErrorRateWarning
+          # 5xx error rate > 1% for 20s = degradation detected
+          expr: |
+            (
+              sum(rate(http_server_responses_total{job="api-gateway",http_status=~"5.."}[2m]))
+              /
+              sum(rate(http_server_responses_total{job="api-gateway"}[2m]))
+            ) > 0.01
+          for: 20s
+          labels:
+            severity: warning
+            signal: service-degrading
+            component: api-gateway
+          annotations:
+            summary: "API elevated 5xx error rate"
+            description: |
+              API 5xx rate is {{ $value | humanizePercentage }} (threshold: 1%).
+              Suspected causes:
+              - Early dependency degradation.
+              - Transient rollout issue.
+              - Traffic burst.
+
+        - alert: IXPAPIGatewaySuccessRateLow
+          # Success rate < 95% for 45s = significant failures
+          expr: |
+            (
+              sum(rate(http_server_responses_total{job="api-gateway",http_status=~"2.."}[2m]))
+              /
+              sum(rate(http_server_responses_total{job="api-gateway"}[2m]))
+            ) < 0.95
+          for: 45s
+          labels:
+            severity: warning
+            signal: service-degradation
+            component: api-gateway
+          annotations:
+            summary: "API success rate low"
+            description: |
+              API success rate is {{ $value | humanizePercentage }} (threshold: 95%).
+              Suspected causes:
+              - Atomix/Kafka failures.
+              - Network or DNS instability.
+              - API overload.
+
+    - name: ixp-auction-health
+      interval: 30s
+      rules:
+        - alert: IXPAuctionNoBidsAcrossIntervals
+          expr: |
+            sum(increase(ixp_auction_no_bid_intervals_total[10m])) >= 3
+            and
+            sum(increase(ixp_auction_runs_total[10m])) >= 3
+          for: 1m
+          labels:
+            severity: warning
+            component: auction-runner
+            signal: no-bid-activity
+          annotations:
+            summary: "Auction runner receiving no bids"
+            description: |
+              No bids observed across recent auction intervals.
+              Observed no-bid intervals: {{ $value }}.
+              Suspected causes:
+              - Consensus store unavailable, so bid writes/reads are failing.
+              - Atomix quorum loss after consensus replica scale-down.
+              - Agents not running.
+              - API bid submissions failing.
+              - No input traffic scenario.
+              - Auction scheduling or processing delay.
+
+    # ============================================================
+    # Dependency Chain Failure Refined Alerts
+    # ============================================================
+    # Progressive severity levels for Atomix failures
+
+    - name: ixp-dependency-chain
+      interval: 30s
+      rules:
+        - alert: IXPAtomixCriticalFailureRate
+          # > 0.1 errors/sec for 5s = critical
+          expr: sum(rate(ixp_api_atomix_operation_errors_total{operation!="bootstrap"}[1m])) > 0.1
+          for: 5s
+          labels:
+            severity: critical
+            component: consensus-store
+            signal: dependency-broken
+          annotations:
+            summary: "Atomix critical failure rate"
+            description: |
+              Atomix error rate is {{ $value }}/sec (threshold: 0.1).
+              Impact: bid and flow paths are heavily affected.
+              Suspected causes:
+              - Consensus quorum loss (replicas below required majority).
+              - Leader-election instability in Atomix consensus group.
+              - Atomix partially unavailable.
+              - Failed leader/election instability.
+              - Severe network or resource issues.
+
+        - alert: IXPAtomixTotalFailureImminent
+          # > 0.5 errors/sec = almost complete failure
+          expr: sum(rate(ixp_api_atomix_operation_errors_total{operation!="bootstrap"}[1m])) > 0.5
+          for: 5s
+          labels:
+            severity: critical
+            component: consensus-store
+            signal: store-unavailable
+          annotations:
+            summary: "Atomix total failure imminent"
+            description: |
+              Atomix error rate is {{ $value }}/sec (threshold: 0.5).
+              Impact: dependency chain is effectively unavailable.
+              Suspected causes:
+              - Atomix scaled down below quorum or fully down.
+              - Consensus leader unavailable after scale-down.
+              - Major network outage.
+              - Cluster-level resource failure.
+
+    # ============================================================
+    # Latency Alerts (Congestion Detection)
+    # ============================================================
+    # Progressive latency thresholds across multiple percentiles
+
+    - name: ixp-congestion-detection
+      interval: 30s
+      rules:
+        - alert: IXPAtomixP99LatencyCritical
+          # p99 latency > 1000ms for 15s = severe congestion
+          expr: histogram_quantile(0.99, sum by (le) (rate(ixp_api_atomix_operation_duration_milliseconds_bucket[2m]))) > 1000
+          for: 15s
+          labels:
+            severity: critical
+            signal: congestion
+            component: consensus-store
+          annotations:
+            summary: "Atomix p99 latency critical"
+            description: |
+              Atomix p99 latency is {{ $value }}ms (threshold: 1000ms).
+              Impact: severe control-path slowdown.
+              Suspected causes:
+              - Consensus quorum degradation or unstable leader election.
+              - Bid spam or request burst.
+              - Atomix under heavy load.
+              - Network congestion.
+              - Atomix instance failure.
+
+    - name: ixp-telemetry
+      interval: 30s  # Evaluate every 30s for telemetry health
+      rules:
+        # ============================================================
+        # Telemetry Service Data Pipeline Monitoring
+        # ============================================================
+        # Alerts for the telemetry data collection pipeline:
+        # Data Plane (switch) → Kafka → Telemetry Service → Atomix → API Gateway
+
+        - alert: IXPTelemetryNoFlowsProduced
+          # No flows published to Atomix for 5 minutes = telemetry pipeline broken
+          expr: sum(rate(telemetry_flow_metrics_published_total[5m])) == 0
+          for: 5m
+          labels:
+            severity: critical
+            component: telemetry-service
+            signal: pipeline-broken
+          annotations:
+            summary: "No telemetry flows published"
+            description: |
+              Telemetry publish rate is zero over the last 5 minutes.
+              Impact: /flows may return missing updates and bidding loop degrades.
+              Suspected causes:
+              - Kafka unavailable or disconnected.
+              - Telemetry consumer stalled.
+              - Upstream telemetry source stopped.
+              - Atomix write path failing.
+
+        - alert: IXPTelemetryKafkaConsumerErrors
+          # Persistent errors consuming from Kafka
+          expr: sum(increase(ixp_telemetry_kafka_consumer_errors_total[5m])) > 10
+          for: 2m
+          labels:
+            severity: warning
+            component: telemetry-service
+            signal: kafka-consumer-errors
+          annotations:
+            summary: "Telemetry Kafka consumer errors"
+            description: |
+              Telemetry service reported {{ $value }} Kafka consumer errors in 5 minutes.
+              Suspected causes:
+              - Kafka broker/network instability.
+              - Topic rebalance or partition issue.
+              - Message decode/schema mismatch.
+
+        - alert: IXPTelemetryAtomixWriteErrors
+          # Cannot write flow metrics to Atomix storage
+          expr: sum(increase(ixp_telemetry_atomix_operation_errors_total[5m])) > 5
+          for: 2m
+          labels:
+            severity: warning
+            component: telemetry-service
+            signal: atomix-write-failure
+          annotations:
+            summary: "Telemetry Atomix write errors"
+            description: |
+              Telemetry service reported {{ $value }} Atomix write failures in 5 minutes.
+              Impact: flow updates consumed from Kafka are not persisted.
+              Suspected causes:
+              - Atomix degraded or unavailable.
+              - Telemetry service connectivity issue.
+              - Write timeout under load.
+
+        - alert: IXPTelemetryLowFlowConsumption
+          # Flows consumed are dropping (kafka not flowing)
+          expr: sum(rate(telemetry_flows_consumed_total[5m])) < 1
+          for: 3m
+          labels:
+            severity: warning
+            component: telemetry-service
+            signal: low-data-rate
+          annotations:
+            summary: "Telemetry flow consumption low"
+            description: |
+              Telemetry consume rate is {{ $value }}/sec (threshold: < 1).
+              Suspected causes:
+              - Upstream producer not sending telemetry.
+              - Kafka delivery issue.
+              - Telemetry consumer lag or stall.

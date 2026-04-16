@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"github.com/atomix/go-sdk/pkg/atomix"
@@ -134,15 +135,6 @@ func (s *AtomixBidStore) Put(ctx context.Context, bid shared.BidRequest, custome
 	carrier := make(localotel.StringMapCarrier)
 	otel.GetTextMapPropagator().Inject(ctx, carrier)
 	traceParent := carrier["traceparent"]
-
-	// identifier := fmt.Sprintf("%d", *bid.IngressPort)
-	// bidValue := fmt.Sprintf("%d|%d|%s", *bid.Units, *bid.UnitPrice, traceParent)
-	// msg := fmt.Sprintf("Putting %s to %s", bidValue, identifier)
-	// slog.DebugContext(ctx, msg,
-	// 	"bidValue", bidValue,
-	// 	"identifer", identifier,
-	// 	"traceParent", traceParent,
-	// )
 
 	key := fmt.Sprintf("%d", *bid.IngressPort)
 	// Value format: units|unitPrice|customerID (last-write-wins per ingress/egress)
@@ -325,4 +317,60 @@ func (s *AtomixCreditsStore) InitCustomerIfMissing(ctx context.Context, customer
 		return fmt.Errorf("init credits for %s: %w", customerID, err)
 	}
 	return nil
+}
+
+// ============================================================
+// UtilityStore — cumulative agent utility per customer
+// ============================================================
+
+// UtilityStore reads cumulative utility totals from the utility-map.
+// Values are written by the auction runner as plain integer strings.
+type UtilityStore interface {
+	Get(ctx context.Context, customerID string) (int, error)
+	List(ctx context.Context) ([]string, error) // customer IDs
+}
+
+type AtomixUtilityStore struct {
+	utilityMap atomixmap.Map[string, string]
+}
+
+func NewAtomixUtilityStore(ctx context.Context) (*AtomixUtilityStore, error) {
+	m, err := atomix.Map[string, string]("utility-map").
+		Codec(generic.Scalar[string]()).
+		Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to init utility map: %w", err)
+	}
+	return &AtomixUtilityStore{utilityMap: m}, nil
+}
+
+func (s *AtomixUtilityStore) Get(ctx context.Context, customerID string) (int, error) {
+	entry, err := s.utilityMap.Get(ctx, customerID)
+	if err != nil {
+		return 0, nil // no entry yet — utility is zero
+	}
+	v, err := strconv.Atoi(entry.Value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid utility value for %s: %w", customerID, err)
+	}
+	return v, nil
+}
+
+func (s *AtomixUtilityStore) List(ctx context.Context) ([]string, error) {
+	var keys []string
+	entries, err := s.utilityMap.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list utility: %w", err)
+	}
+	for {
+		entry, err := entries.Next()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, fmt.Errorf("iterate utility: %w", err)
+		}
+		keys = append(keys, entry.Key)
+	}
+	return keys, nil
 }

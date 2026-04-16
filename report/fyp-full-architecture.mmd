@@ -1,0 +1,51 @@
+flowchart TB
+  %% ===== Styles =====
+  classDef inScope fill:#e8f7ef,stroke:#2f855a,stroke-width:2px,color:#1f2937;
+  classDef boundary fill:#fff7e6,stroke:#b7791f,stroke-width:2px,color:#1f2937;
+  classDef infra fill:#eef2ff,stroke:#4c51bf,stroke-width:2px,color:#1f2937;
+  classDef actor fill:#f7fafc,stroke:#4a5568,stroke-width:1.5px,color:#1f2937;
+  classDef bus fill:#fff5f5,stroke:#c53030,stroke-width:2px,color:#1f2937;
+
+  %% ===== Actors =====
+  AG[Customer Agent\n(Strategy Variants)]
+
+  %% ===== Global Control Plane (In Scope) =====
+  subgraph "Global Control Plane (In Scope)"
+    direction LR
+    API[API Gateway]
+    AUC[Auction Runner]
+    TEL[Telemetry Processor]
+    ATX[(Atomix\nDistributed State)]
+    KAFKA[[Kafka Topics]]
+
+    API -->|Write Bids / Credits| ATX
+    ATX -->|Read Flows / Credits / Auctions| API
+    AUC -->|Read Bids / Write Auction State| ATX
+    ATX -->|Read Scenario State| AUC
+    AUC -->|Publish Clearing Outputs| KAFKA
+    KAFKA -->|Consume Telemetry Topic| TEL
+    TEL -->|Write Flow Metrics| ATX
+  end
+
+  %% ===== Downstream Side (Out of Scope) =====
+  subgraph "Local + Data Plane (External Boundary)"
+    direction TB
+    DSP[Downstream Config Application]
+    SW[Switch / Metering Plane]
+  end
+
+  %% ===== Interactions =====
+  AG -->|POST /bids| API
+  API -->|200/202 + Policy Result| AG
+  AG -->|GET /flows, /credits, /auctions| API
+
+  KAFKA -->|Clearing Result Events| DSP
+  DSP -->|Apply Config / Allocation| SW
+  SW -. Flow Counters / Telemetry .-> KAFKA
+
+  %% ===== Scope classes =====
+  class API,AUC,TEL inScope;
+  class ATX infra;
+  class KAFKA bus;
+  class DSP,SW boundary;
+  class AG actor;

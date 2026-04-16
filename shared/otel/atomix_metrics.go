@@ -2,6 +2,7 @@ package otel
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -19,25 +20,33 @@ var (
 
 // InitAtomixMetrics initializes Atomix operation metrics (counter + histogram)
 // Call this once during app startup to register the instruments
-func InitAtomixMetrics() {
+func InitAtomixMetrics(service string) {
+	service = strings.TrimSpace(strings.ToLower(service))
+	if service == "" {
+		service = "general"
+	}
+
+	metricPrefix := fmt.Sprintf("ixp.%s.atomix.operation", service)
+	prometheusPrefix := fmt.Sprintf("ixp_%s_atomix_operation", service)
+
 	atomixMetricsOnce.Do(func() {
 		var err error
 
 		// Initialize Atomix Operation Latency Histogram
 		AtomixOpLatency, err = Meter.Int64Histogram(
-			"ixp.atomix.operation.duration",
+			metricPrefix+".duration",
 			metric.WithDescription("Latency of Atomix read/write operations - detects congestion and timeouts"),
 			metric.WithUnit("ms"),
 		)
 		if err != nil {
 			slog.Error("Failed to initialize AtomixOpLatency", "error", err)
 		} else {
-			slog.Info("Atomix operation latency histogram initialized", "metric", "ixp_atomix_operation_duration_milliseconds")
+			slog.Info("Atomix operation latency histogram initialized", "metric", prometheusPrefix+"_duration_milliseconds")
 		}
 
 		// Initialize Atomix Operation Error Counter
 		AtomixOpErrors, err = Meter.Int64Counter(
-			"ixp.atomix.operation.errors",
+			metricPrefix+".errors",
 			metric.WithDescription("Count of failed Atomix operations - detects store unavailability/degradation"),
 			metric.WithUnit("1"),
 		)
@@ -45,13 +54,13 @@ func InitAtomixMetrics() {
 			slog.Error("Failed to initialize AtomixOpErrors", "error", err)
 			AtomixOpErrors = nil
 		} else {
-			slog.Info("Atomix operation error counter initialized successfully", "metric", "ixp_atomix_operation_errors_total")
+			slog.Info("Atomix operation error counter initialized successfully", "metric", prometheusPrefix+"_errors_total")
 			// Bootstrap emit to ensure counter exists in Prometheus from startup (use value 1, not 0)
 			AtomixOpErrors.Add(context.Background(), 1, metric.WithAttributes(
 				attribute.String("operation", "bootstrap"),
 				attribute.String("error.type", "none"),
 			))
-			slog.Info("Bootstrap increment emitted for AtomixOpErrors", "metric", "ixp_atomix_operation_errors_total")
+			slog.Info("Bootstrap increment emitted for AtomixOpErrors", "metric", prometheusPrefix+"_errors_total")
 		}
 	})
 }
@@ -78,9 +87,6 @@ func RecordAtomixOperation(ctx context.Context, operation string, startTime time
 	latencyMs := int64(time.Since(startTime).Milliseconds())
 	errorType := classifyAtomixError(err)
 
-	// DEBUG: Log immediately to verify function is called
-	slog.InfoContext(safeCtx, "🔍 RecordAtomixOperation called", "operation", operation, "error", err != nil, "latencyMs", latencyMs)
-
 	// Record latency histogram - per OTel spec, only include error.type on failures
 	if AtomixOpLatency != nil {
 		if err != nil {
@@ -100,20 +106,15 @@ func RecordAtomixOperation(ctx context.Context, operation string, startTime time
 	// Record error counter for error rate tracking
 	if err != nil {
 		if AtomixOpErrors != nil {
-			// Use safeCtx to preserve trace correlation while removing timeout
-			slog.InfoContext(safeCtx, "Recording Atomix operation error", "operation", operation, "error.type", errorType, "latency_ms", latencyMs)
 			AtomixOpErrors.Add(safeCtx, 1,
 				metric.WithAttributes(
 					attribute.String("operation", operation),
 					attribute.String("error.type", errorType),
 				))
-			slog.InfoContext(safeCtx, "Error counter incremented successfully", "operation", operation, "error.type", errorType)
 		} else {
 			slog.ErrorContext(safeCtx, "❌ CRITICAL: AtomixOpErrors counter is nil - metrics will not be recorded!", "operation", operation)
 		}
-		slog.ErrorContext(safeCtx, "Atomix operation failed", "operation", operation, "duration_ms", latencyMs, "error", err)
-	} else {
-		slog.DebugContext(safeCtx, "Atomix operation succeeded", "operation", operation, "duration_ms", latencyMs)
+		slog.DebugContext(safeCtx, "Atomix operation failed", "operation", operation, "duration_ms", latencyMs, "error.type", errorType)
 	}
 }
 

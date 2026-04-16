@@ -6,11 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/atomix/go-sdk/pkg/atomix"
@@ -19,6 +17,7 @@ import (
 	"github.com/chew01/ixp-gcp/auction/models"
 	"github.com/chew01/ixp-gcp/shared"
 	localotel "github.com/chew01/ixp-gcp/shared/otel"
+	pb "github.com/chew01/ixp-gcp/shared/proto/pb"
 	"github.com/chew01/ixp-gcp/shared/scenario"
 	"github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/otel"
@@ -26,14 +25,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
-)
-
-var (
-	auctionMetricsOnce           sync.Once
-	auctionRunsCounter           metric.Int64Counter
-	auctionRequestedUnitsCounter metric.Int64Counter
-	auctionClearingPriceLatest   metric.Int64Gauge
-	auctionErrorsCounter         metric.Int64Counter
+	"google.golang.org/protobuf/proto"
 )
 
 // AuctionRunner owns the auction loop
@@ -44,56 +36,14 @@ type AuctionRunner struct {
 }
 
 func New(writer *kafka.Writer, interval time.Duration, scenario *scenario.Scenario) *AuctionRunner {
-	initAuctionMetrics()
-	localotel.InitAtomixMetrics() // Initialize shared Atomix metrics
+	InitAuctionMetrics()
+	localotel.InitAtomixMetrics("auction")
+	localotel.InitKafkaMetrics("auction")
 	return &AuctionRunner{
 		writer:   writer,
 		interval: interval,
 		scenario: scenario,
 	}
-}
-
-func initAuctionMetrics() {
-	auctionMetricsOnce.Do(func() {
-		var err error
-
-		auctionRunsCounter, err = localotel.Meter.Int64Counter(
-			"ixp.auction.runs.total",
-			metric.WithDescription("Total number of auction runs"),
-			metric.WithUnit("1"),
-		)
-		if err != nil {
-			slog.Error("failed to initialize auctionRunsCounter", "error", err)
-		}
-
-		auctionRequestedUnitsCounter, err = localotel.Meter.Int64Counter(
-			"ixp.auction.units.requested",
-			metric.WithDescription("Total number of bandwidth units requested by submitted bids"),
-			metric.WithUnit("kbps"),
-		)
-		if err != nil {
-			slog.Error("failed to initialize auctionRequestedUnitsCounter", "error", err)
-		}
-
-		auctionClearingPriceLatest, err = localotel.Meter.Int64Gauge(
-			"ixp.auction.clearing_price.latest",
-			metric.WithDescription("Latest auction clearing price per egress port"),
-			metric.WithUnit("SGD"),
-		)
-		if err != nil {
-			slog.Error("failed to initialize auctionClearingPriceLatest", "error", err)
-		}
-
-		auctionErrorsCounter, err = localotel.Meter.Int64Counter(
-			"ixp.auction.errors.total",
-			metric.WithDescription("Critical dependency or logic errors"),
-			metric.WithUnit("1"),
-		)
-		if err != nil {
-			slog.Error("failed to initialize auctionErrorsCounter", "error", err)
-		}
-
-	})
 }
 
 func recordAuctionError(ctx context.Context, errorType string) {
@@ -104,9 +54,6 @@ func recordAuctionError(ctx context.Context, errorType string) {
 }
 
 func (r *AuctionRunner) Run(ctx context.Context) {
-	// ctx, span := localotel.Tracer.Start(ctx, "auction-runner-running")
-	// defer span.End()
-
 	slog.DebugContext(ctx, "checking for scenario existence")
 	if r.scenario == nil {
 		// span.SetStatus(codes.Error, "scenario is nil or has no switches")
@@ -262,6 +209,11 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 
 	}
 
+	RecordBidsReceived(auctionCtx, int64(len(bids)), attrs)
+	if len(bids) == 0 {
+		RecordNoBidInterval(auctionCtx, attrs)
+	}
+
 	if capacity <= 0 || len(bids) == 0 {
 		if len(bids) > 0 {
 			requestedUnitsByIngress := make(map[uint64]int64)
@@ -361,6 +313,11 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 		slog.ErrorContext(auctionCtx, fmt.Sprintf("Error updating credits: %v", err), "error", err)
 	}
 
+	// Accumulate utility: (valuation_per_unit - clearing_price) * allocated_units per customer.
+	if err := r.updateUtility(ctx, allocations, clearingPrice); err != nil {
+		slog.ErrorContext(ctx, "Error updating utility", "error", err)
+	}
+
 	// Store auction history, including clearing price and per-customer allocations.
 	if err := r.storeAuctionHistory(auctionCtx, intervalID, egressPort, clearingPrice, allocations); err != nil {
 		recordAuctionError(auctionCtx, "atomix_history_write_failed")
@@ -390,47 +347,36 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 func (r *AuctionRunner) WriteResults(ctx context.Context, switchID string, ingressPort, egressPort, bandwidthKbps uint64) error {
 	ctx, span := localotel.Tracer.Start(ctx, "kafka-produce-result")
 	defer span.End()
-	results := shared.AuctionResultRecord{
-		IngressPort:   ingressPort,
-		EgressPort:    egressPort,
-		BandwidthKbps: bandwidthKbps,
-	}
 	span.SetAttributes(
 		attribute.Int64("auction.ingress_port", int64(ingressPort)),
 		attribute.Int64("auction.egress_port", int64(egressPort)),
 		attribute.Int64("auction.bandwidthkpbs", int64(bandwidthKbps)),
 	)
-	key := fmt.Sprintf("%s-results", switchID)
-	value, err := json.Marshal(results)
-	if err != nil {
-		span.SetStatus(codes.Error, "failed to parse into JSON")
-		span.RecordError(err)
-		msg := fmt.Sprintf("failed to parse into JSON: %v", err)
-		slog.ErrorContext(ctx, msg, "error", err)
+	ingressPort32 := uint32(ingressPort)
+	egressPort32 := uint32(egressPort)
+	result := &pb.AuctionResult{
+		FlowId: &pb.Flow{
+			IngressPort: &ingressPort32,
+			EgressPort:  &egressPort32,
+		},
+		BandwidthKbps: bandwidthKbps,
 	}
 
-	// Prepare Kafka Headers for Propagation
-	// This allows the next service to know which trace this belongs to
-	headers := []kafka.Header{}
-	carrier := localotel.StringMapCarrier{}
-	otel.GetTextMapPropagator().Inject(ctx, carrier)
-
-	for k, v := range carrier {
-		headers = append(headers, kafka.Header{
-			Key:   k,
-			Value: []byte(v),
-		})
+	key := fmt.Sprintf("%s-results", switchID)
+	value, err := proto.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("marshal auction result: %w", err)
 	}
 
 	err = r.writer.WriteMessages(ctx, kafka.Message{
-		Key:     []byte(key),
-		Value:   value,
-		Headers: headers, // Trace context being passed here
+		Key:   []byte(key),
+		Value: value,
 	})
 
 	if err != nil {
 		span.SetStatus(codes.Error, "failed to write to kafka")
 		span.RecordError(err)
+		RecordAuctionKafkaProduceError(ctx, r.writer.Topic)
 		msg := fmt.Sprintf("Failed to write to kafka: %v", err)
 		slog.ErrorContext(ctx, msg, "error", err)
 		return err
@@ -467,7 +413,7 @@ func (r *AuctionRunner) updateCredits(ctx context.Context, allocations []models.
 		var cred shared.CustomerCredits
 		if err == nil && entry.Value != "" {
 			if err := json.Unmarshal([]byte(entry.Value), &cred); err != nil {
-				log.Printf("invalid credits value for %s: %v", customerID, err)
+				slog.ErrorContext(ctx, "invalid credits value", "customer_id", customerID, "error", err)
 				continue
 			}
 		}
@@ -482,7 +428,57 @@ func (r *AuctionRunner) updateCredits(ctx context.Context, allocations []models.
 			return fmt.Errorf("update credits for %s: %w", customerID, err)
 		}
 		localotel.RecordAtomixOperation(ctx, "write_credits", startAtomixTime, nil)
-		log.Printf("[credits] %s spent %d (total %d)", customerID, amount, cred.TotalSpent)
+		slog.DebugContext(ctx, "Customer spent credits", "customer_id", customerID, "amount", amount, "total_spent", cred.TotalSpent)
+	}
+	return nil
+}
+
+// valuationForCustomer looks up the ValuationPerUnit for a customer in the scenario.
+// Returns 0 if not found (will result in zero or negative utility, which is a warning sign).
+func (r *AuctionRunner) valuationForCustomer(customerID string) int {
+	for _, c := range r.scenario.Customers {
+		if c.ID == customerID {
+			return c.ValuationPerUnit
+		}
+	}
+	return 0
+}
+
+// updateUtility accumulates (valuation_per_unit - clearing_price) * allocated_units
+// per customer into the utility-map Atomix store. Values can be negative when
+// clearing_price > valuation (deliberate low-valuation experiments).
+func (r *AuctionRunner) updateUtility(ctx context.Context, allocations []models.Allocation, clearingPrice int) error {
+	utilityByCustomer := make(map[string]int)
+	for _, alloc := range allocations {
+		if alloc.CustomerID == "" {
+			continue
+		}
+		valuation := r.valuationForCustomer(alloc.CustomerID)
+		utility := (valuation - clearingPrice) * int(alloc.AllocatedUnits)
+		utilityByCustomer[alloc.CustomerID] += utility
+	}
+	if len(utilityByCustomer) == 0 {
+		return nil
+	}
+
+	utilityMap, err := atomix.Map[string, string]("utility-map").
+		Codec(generic.Scalar[string]()).
+		Get(ctx)
+	if err != nil {
+		return fmt.Errorf("get utility map: %w", err)
+	}
+
+	for customerID, utility := range utilityByCustomer {
+		entry, err := utilityMap.Get(ctx, customerID)
+		var current int
+		if err == nil && entry.Value != "" {
+			current, _ = strconv.Atoi(entry.Value)
+		}
+		current += utility
+		if _, err := utilityMap.Put(ctx, customerID, strconv.Itoa(current)); err != nil {
+			return fmt.Errorf("update utility for %s: %w", customerID, err)
+		}
+		slog.DebugContext(ctx, "Customer earned utility", "customer_id", customerID, "utility_earned", utility, "total_utility", current)
 	}
 	return nil
 }

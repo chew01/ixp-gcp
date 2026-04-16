@@ -95,10 +95,10 @@ alertmanager:
 
     route:
       receiver: "null"
-      group_by: ["alertname", "namespace", "job"]
-      group_wait: 5s
-      group_interval: 5m
-      repeat_interval: 3h
+      group_by: ["component", "signal", "severity"]
+      group_wait: 20s
+      group_interval: 10m
+      repeat_interval: 4h
       routes:
         - receiver: "telegram"
           matchers:
@@ -116,9 +116,19 @@ alertmanager:
             send_resolved: true
 
     inhibit_rules:
+      # If a critical alert is active for a component, suppress warning-level
+      # alerts from the same component to avoid flood from symptom cascades.
       - source_matchers: ["severity = critical"]
         target_matchers: ["severity = warning"]
-        equal: ["alertname", "namespace"]
+        equal: ["component"]
+
+      # When Atomix is critically unhealthy, suppress common secondary
+      # telemetry and auction symptom warnings during the same incident.
+      - source_matchers:
+          - 'alertname =~ "IXPAtomix(OperationFailuresCritical|NearTotalFailure|CriticalFailureRate|TotalFailureImminent)"'
+        target_matchers:
+          - 'alertname =~ "IXPTelemetryLowFlowConsumption|IXPAuctionNoBidsAcrossIntervals|IXPAPIGatewayHighErrorRateWarning|IXPAPIGatewaySuccessRateLow"'
+        equal: []
 
   # Telegram wiring:
   # 1) Create secret in observability namespace:

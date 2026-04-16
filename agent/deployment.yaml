@@ -15,9 +15,10 @@ spec:
       containers:
       - name: customer-agent
         image: customer-agent:local
+        imagePullPolicy: Never
         env:
           - name: CUSTOMER_ID
-            value: "as12345"
+            value: "peer-vlan11"
           - name: API_BASE_URL
             value: "http://api-gateway"
           - name: SCENARIO_PATH
@@ -54,9 +55,10 @@ spec:
       containers:
       - name: customer-agent
         image: customer-agent:local
+        imagePullPolicy: Never
         env:
           - name: CUSTOMER_ID
-            value: "as67890"
+            value: "peer-vlan38"
           - name: API_BASE_URL
             value: "http://api-gateway"
           - name: SCENARIO_PATH

@@ -1,0 +1,190 @@
+\section{Evaluation and Results}
+
+This chapter evaluates whether the observability stack detects, localizes, and communicates soft failures in the global control plane. The test cases are aligned with the alert rules defined in Chapter 4 and the implementation details described in Chapter 5. The supporting trigger scripts are stored in \texttt{observability-testing-scripts/} so that each scenario can be replayed consistently during the final demonstration.
+
+\subsection{Experimental Setup and Testbed}
+
+The evaluation uses the same Kubernetes environment as the implementation, with the API Gateway, Auction Runner, Telemetry Processor, Atomix, Prometheus, Alertmanager, and the OpenTelemetry Collector deployed together. The measurement path is:\newline
+services $\rightarrow$ OpenTelemetry Collector $\rightarrow$ Prometheus $\rightarrow$ Alertmanager $\rightarrow$ Telegram.
+
+\begin{itemize}
+    \item \texttt{./observability-testing-scripts/01-trigger-atomix-degradation.sh} for Atomix dependency outage;
+    \item \texttt{./observability-testing-scripts/02-trigger-bid-flood.sh} for API congestion pressure;
+    \item \texttt{./observability-testing-scripts/03-restore-cluster.sh} to return the cluster to a clean state after each run.
+\end{itemize}
+
+\subsubsection{Execution Workflow}
+
+The chapter execution order is baseline first, followed by one fault-injection scenario per run.
+Each scenario run then follows the same sequence:
+
+\begin{enumerate}
+    \item verify healthy baseline state (no active IXP alerts, one healthy trace, and clean dependency logs);
+    \item deploy the scenario trigger and verify rollout readiness;
+    \item prepare Grafana, Prometheus, Alertmanager, Jaeger, and Loki for concurrent observation;
+    \item execute one trigger script or load generator;
+    \item observe alert-rule activation;
+    \item collect metric, trace, log, and notification evidence within the same incident window;
+    \item restore the cluster before initiating the next scenario.
+\end{enumerate}
+
+\subsubsection{Pre-Scenario Baseline Verification}
+
+Before fault injection, a baseline sample is collected for each observability signal. This baseline provides the healthy reference point used to interpret scenario outcomes:
+
+\begin{itemize}
+    \item \textbf{Metrics}: Grafana panel or Prometheus query showing stable request latency and no active IXP alerts.
+    \item \textbf{Traces}: a normal API request trace in Jaeger (for example bid submission or flow read) with no dependency error span status.
+    \item \textbf{Logs}: a Loki query over API, auction, and telemetry logs showing normal operation without repeated dependency errors.
+\end{itemize}
+
+The baseline verification is intentionally concise. The core evaluation remains scenario-driven, where each scenario is assessed through correlated metric deviation, causal trace evidence, and supporting log records.
+
+\subsection{Cross-Signal Incident Validation}
+
+The evaluation is designed as cross-signal incident reconstruction rather than alert-only verification. Each scenario is validated through synchronized evidence types: logs (Loki), traces (Jaeger), metrics (Prometheus query trend), and operator alerts (Telegram via Alertmanager). The scenarios focus on Atomix dependency outage and request congestion caused by bid flooding.
+
+A central design principle in this evaluation is the use of business-logic metrics as early-warning indicators. Examples include counters that track auction intervals with no bids and counters for Atomix operation failures across control-plane paths. These metrics provide fast anomaly detection at system-behavior level; traces and logs then provide causal localization and event-level verification. Combined, the signals reduce the time needed to detect, verify, and remediate incidents.
+
+In addition to service-level tracing, this project validates cross-service trace correlation between API bid intake and auction processing. The API Gateway injects \texttt{traceparent} into the Atomix bid-map value during bid writes, and the Auction Runner extracts that value when listing bids and links the processing span to the originating bid trace. This shows that the auction-side span is causally connected to the original API bid path, even though the handoff occurs through shared store state rather than direct RPC.
+
+\subsubsection{Bid-to-Auction Span Correlation Demonstration}
+
+This section demonstrates that a bid-processing span in the Auction Runner can be traced back to the originating bid span from the API Gateway. The demonstration is based on the implemented trace-context propagation path through Atomix shared state.
+
+The key reason this mechanism is needed is span-model mismatch between the two components: bid spans are created in request-time API handling, while auction spans are created later in interval-driven runner execution. Since the two spans are not generated in one synchronous parent-child chain, the correlation is implemented using propagated \texttt{traceparent} and span links.
+
+During validation, the operator can start from an auction-side \texttt{process-individual-bid} span in Jaeger, inspect its span links, and confirm reference back to the original API bid trace context. This provides concrete evidence that the auction decision path can be connected to the specific bid-ingress event that produced it.
+
+This bid-to-auction traceability is used as supporting evidence in incident analysis: when auction behavior is delayed or abnormal, linked traces allow faster verification of whether the issue originated at bid ingress, shared-state persistence, or auction-side processing.
+
+The two screenshots below document the correlation path from both ends of the trace flow. The first shows the Auction Runner processing an individual bid and linking that span back to the originating API Gateway bid-storing span through the propagated trace context. The second shows the API Gateway bid-storing span that wrote the bid state into Atomix, which is the source span referenced later during auction processing.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.98\linewidth]{\detokenize{Trace Propagation1.png}}
+    \caption{Auction Runner trace correlation: the \texttt{process-individual-bid} span references the originating API Gateway bid-storing trace, showing the auction-side processing path that later produces the bid's auction result to Kafka.}
+    \label{fig:chapter6-trace-propagation-auction}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.98\linewidth]{\detokenize{Trace Propagation2.png}}
+    \caption{API Gateway trace origin: the \texttt{bid-storing} span records the bid write into Atomix and provides the trace context that is later linked by the Auction Runner during individual bid processing.}
+    \label{fig:chapter6-trace-propagation-api}
+\end{figure}
+
+Accordingly, the scenario subsections prioritize incident evidence over fixed alert expectations. Alert firing is treated as corroborative operational evidence, while logs, traces, and metric trends provide the primary basis for incident interpretation.
+
+\subsubsection{Baseline Run}
+
+The baseline run confirms that the observability stack remains stable under normal traffic and that dependency paths are healthy before fault injection. In this state, Loki should show no recurring dependency errors, Jaeger should show healthy request traces, Prometheus should report stable query baselines, and Telegram should remain idle.
+
+\begin{figure}[htbp]
+    \centering
+    \begin{minipage}{0.95\linewidth}
+        \centering
+        \includegraphics[width=0.95\linewidth]{\detokenize{Baseline - Logs.png}}
+        \par\footnotesize (a) Loki baseline logs
+    \end{minipage}\hfill
+    \\[0.8em]
+    \begin{minipage}{0.95\linewidth}
+        \centering
+        \includegraphics[width=0.95\linewidth]{\detokenize{Baseline - Traces.png}}
+        \par\footnotesize (b) Jaeger baseline trace
+    \end{minipage}\hfill
+    \\[0.8em]
+    \begin{minipage}{0.95\linewidth}
+        \centering
+        \includegraphics[width=0.95\linewidth]{\detokenize{Baseline - Metrics.png}}
+        \par\footnotesize (c) Prometheus baseline metrics
+    \end{minipage}
+    \caption{Baseline evidence showing healthy operation before fault injection.}
+    \label{fig:chapter6-baseline-evidence}
+\end{figure}
+
+\noindent\footnotesize{These three screenshots establish the healthy reference state: the logs contain only debug, info, and warning entries with no errors, the trace shows a normal request path across API Gateway and Auction Runner, and the metrics panel shows only the bootstrap values for the Atomix operation error counter. Together, they serve as the baseline against which the fault-injection scenarios are compared.}
+
+
+
+\subsubsection{Scenario 1: Atomix Consensus Degradation}
+
+This scenario is triggered by scaling down the Atomix consensus store with \texttt{01-trigger-atomix-degradation.sh}. The typical signal pattern is increased Atomix operation errors and latency, with dependency-chain alerts in Prometheus and Telegram. Because alert firing depends on timing, inhibition, and evaluation windows, the report presents representative alerts from the incident window rather than every possible alert that may trigger.
+
+The key signal in this scenario is the transition from normal bid and flow access to failed Atomix operations. This transition provides clear evidence that the observability stack can detect a soft failure before the entire control plane appears unavailable.
+
+The Scenario 1 evidence is organized as logs, trace, metrics, and alerts from the same incident window.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\linewidth]{\detokenize{Scenario1 - Logs.png}}
+    \caption{Scenario 1 logs (API Gateway): repeated flow-read and credit-read failures during Atomix degradation.}
+    \label{fig:chapter6-atomix-logs}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\linewidth]{\detokenize{Scenario1 - Trace.png}}
+    \caption{Scenario 1 trace evidence: customer-agent calls into API Gateway show degraded spans and deadline-related failures.}
+    \label{fig:chapter6-atomix-trace}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\linewidth]{\detokenize{Scenario1 - Metrics.png}}
+    \caption{Scenario 1 metrics: \texttt{ixp\_api\_atomix\_operation\_errors\_total} spikes (non-bootstrap operation path) under Atomix degradation.}
+    \label{fig:chapter6-atomix-metrics}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \begin{minipage}[t]{0.32\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{\detokenize{Scenario1 - Alert1.png}}
+    \end{minipage}\hfill
+    \begin{minipage}[t]{0.32\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{\detokenize{Scenario1 - Alert2.png}}
+    \end{minipage}\hfill
+    \begin{minipage}[t]{0.32\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{\detokenize{Scenario1 - Alert3.png}}
+    \end{minipage}
+    \caption{Scenario 1 Telegram alerts (horizontal compact layout): representative critical alerts received during Atomix degradation.}
+    \label{fig:chapter6-atomix-alerts}
+\end{figure}
+
+\subsubsection{Scenario 2: API Congestion via Bid Floods}
+
+Scenario 2 evaluates request-path congestion by executing \texttt{02-trigger-bid-flood.sh}, which submits a sustained burst of valid bid requests to the API Gateway. The resulting evidence shows a sharp increase in the bid submission counter recorded by \texttt{ixp\_bid\_submitted\_total} during the incident window.
+
+Under this load profile, the bid-submission metric \texttt{ixp\_bid\_submitted\_total} exhibits a clear increase, and the corresponding alert (\texttt{IXPAPIGatewayBidRateHigh}) transitions to the firing state. This result supports the use of domain-level traffic metrics as practical early-warning indicators for volumetric stress on the control-plane ingress path.
+
+The collected evidence for this scenario consists of a bid-count spike, an alert-state transition to firing, and corroborating API Gateway logs showing sustained bid intake during the same incident window.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\linewidth]{\detokenize{Scenario2 - Metrics.png}}
+    \caption{Scenario 2 metric evidence: increase in the \texttt{ixp\_bid\_submitted\_total} counter during the bid-flood interval.}
+    \label{fig:chapter6-flood-metrics}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\linewidth]{\detokenize{Scenario2 - Alert.png}}
+    \caption{Scenario 2 alert evidence: \texttt{IXPAPIGatewayBidRateHigh} in the firing state during the bid-flood interval.}
+    \label{fig:chapter6-flood-alert}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\linewidth]{\detokenize{Scenario2 - Logs.png}}
+    \caption{Scenario 2 log evidence (Loki): API Gateway entries showing sustained bid processing for \texttt{customer\_id=flood-test} during the flood window.}
+    \label{fig:chapter6-flood-logs}
+\end{figure}
+
+\subsection{Scenario Testing Wrap-Up}
+
+The scenario-based evaluation shows that the observability stack can detect and explain control-plane degradation under two representative fault classes: dependency failure (Atomix degradation) and request-path congestion (bid flood pressure). In both scenarios, the evidence collected from logs, traces, metrics, and alerts was sufficient to identify the affected path and confirm incident impact at the application level.
+
+The baseline and fault-injection results together support the core claim of this project: observability signals are practical for operational diagnosis in the IXP control plane when interpreted as a coordinated evidence set rather than as isolated metrics. The next chapter summarizes the overall findings, key limitations, and recommended future improvements.

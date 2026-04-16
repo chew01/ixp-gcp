@@ -13,11 +13,17 @@ import (
 	localotel "github.com/chew01/ixp-gcp/shared/otel"
 	"github.com/chew01/ixp-gcp/shared/scenario"
 	"github.com/segmentio/kafka-go"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 )
 
 func main() {
 	ctx := context.Background()
+
+	// Enable OTel SDK error logging to diagnose telemetry export failures
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		slog.Error("OpenTelemetry SDK Error", "error", err)
+	}))
 
 	// Set up OpenTelemetry.
 	otelShutdown, err := localotel.SetupOTelSDK(ctx)

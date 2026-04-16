@@ -1,0 +1,212 @@
+\documentclass[11pt, a4paper]{article}
+
+% --- Packages ---
+\usepackage{mathptmx} % Sets font to Times Roman 
+\usepackage{setspace} % Allows custom line spacing 
+\onehalfspacing       % ACTIVATE 1.5 line spacing 
+\usepackage[a4paper, margin=1in]{geometry}
+\usepackage{natbib} % For APA style citations 
+\usepackage{titlesec} % For hierarchical section formatting
+\usepackage[hidelinks]{hyperref}
+\usepackage{xurl}
+\usepackage{parskip} % Use spaces instead of indentation between paragraphs
+
+% --- Graphics Package ---
+\usepackage{graphicx}       % Required for including images
+\graphicspath{{./}}        % Tell LaTeX to look for images in the main folder
+\usepackage{float}
+
+% --- YAML formatting
+\usepackage{minted}
+
+% --- Table Package
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{ragged2e}
+
+\renewcommand*\contentsname{Table of Contents}
+\begin{document}
+
+% ==========================================
+% FRONT HARD COVER
+% ==========================================
+\begin{titlepage}
+    \centering
+    {\Large Undergraduate Research Opportunity Program
+(UROP) Project Report\par}
+    \vspace*{\fill}
+    {\huge \textbf{Design and Implementation of an Observable Global Control Plane for Software-Defined Networks}\par}
+    \vspace*{\fill}
+    {\Large By\par}
+    \vspace{0.5cm}
+    {\Large Hon Hao Yuan\par}
+    \vspace*{\fill}
+    {\Large Department of Computer Science\par}
+    {\Large School of Computing\par}
+    {\Large National University of Singapore\par}
+    \vspace{0.5cm}
+    {\Large 2025/2026\par}
+\end{titlepage}
+
+% ==========================================
+% TITLE PAGE
+% ==========================================
+\begin{titlepage}
+    \centering
+    {\Large Undergraduate Research Opportunity Program
+(UROP) Project Report\par}
+    \vspace*{\fill}
+    {\huge \textbf{Design and Implementation of an Observable Global Control Plane for Software-Defined Networks}\par}
+    \vspace*{\fill}
+    {\Large By\par}
+    \vspace{0.5cm}
+    {\Large Hon Hao Yuan\par}
+    \vspace*{\fill}
+    {\Large Department of Computer Science\par}
+    {\Large School of Computing\par}
+    {\Large National University of Singapore\par}
+    \vspace{0.5cm}
+    {\Large 2025/2026\par}
+    \vspace{1cm}
+    \begin{flushleft}
+    \large
+    Advisor: Assoc Prof Richard Ma Tianbai\par
+    \vspace{0.5cm}
+    Deliverables:\par
+    \qquad \qquad Report: 1 Volume\par
+    \end{flushleft}
+\end{titlepage}
+
+% --- Front Matter Numbering ---
+\pagenumbering{roman}
+
+% ==========================================
+% ABSTRACT
+% ==========================================
+\clearpage
+\phantomsection
+\addcontentsline{toc}{section}{Abstract}
+\begin{center}
+    \Large \textbf{Abstract}
+\end{center}
+\onehalfspacing 
+
+Modern software design has increasingly shifted from monolithic architectures to distributed microservices, offering unparalleled scalability at the cost of system visibility. In these complex environments, understanding the intricate details of service interactions requires robust observability driven by telemetry data: traces, logs, and metrics. This project explores the design and implementation of an enterprise-grade observability and alerting pipeline specifically for the global control plane of a distributed Software-Defined Network (SDN) bandwidth auction system. Abstracting away the underlying data plane, the architecture focuses entirely on the control plane microservices—an API Gateway, an Auction Runner, and a Telemetry stream-processor. The telemetry processor consumes raw network state produced by low-level switches via Kafka, while the entire control plane relies on Atomix for distributed state. By instrumenting these Go services with OpenTelemetry, the system moves beyond basic Kubernetes infrastructure monitoring to capture deep, system-level business health. This precise telemetry is scraped by Prometheus, evaluated against dynamic operational rules, and routed through Alertmanager for real-time Telegram notifications. Ultimately, this project demonstrates how modern observability frameworks can successfully detect "silent failures," dependency outages, and network congestion, ensuring the reliability and economic integrity of distributed SDN control planes.
+
+\vspace{1cm}
+
+\noindent \textbf{Subject Descriptors:}\par
+\qquad \qquad C.2.1 Network Architecture and Design \par
+\qquad \qquad C.2.3 Network Operations\par
+\qquad \qquad C.2.4 Distributed Systems \par
+\qquad \qquad D.2.11 Software Architectures \par
+\qquad \qquad D.4.5 Reliability
+
+\vspace{0.5cm}
+
+\noindent \textbf{Keywords:}\par
+\qquad \qquad Microservices, Observability, OpenTelemetry, Software-Defined Networking, Alerting Systems
+
+\vspace{0.5cm}
+
+\noindent \textbf{Implementation Software and Hardware:}\par
+\qquad \qquad Go 1.25.4, Docker, Kubernetes, Minikube 1.37, Kafka 4.1.1, Atomix v0.10.0, Prometheus, Grafana, OpenTelemetry Collector v0.66.0, Jaeger, Loki v13, gRPC v1.78.0
+
+% ==========================================
+% ACKNOWLEDGEMENT
+% ==========================================
+\clearpage % Ensures we start on a fresh page before dropping the anchor
+\phantomsection % Drops the invisible hyperlink anchor here
+\addcontentsline{toc}{section}{Acknowledgements}
+
+\begin{center}
+    \Large \textbf{Acknowledgements}
+\end{center}
+
+\onehalfspacing
+I would like to sincerely thank my advisor, Prof. Richard Ma, for his continuous support and supervision during this independent project. His willingness to accommodate my academic interests and his clear direction were vital to the project's success. I am deeply grateful for his patience, insightful feedback, and the time he dedicated to our weekly discussions, all of which contributed significantly to my technical and professional growth.
+
+Furthermore, I wish to acknowledge my teammate, Jun Heng, for his valuable technical advice. His insights into system observability and request tracking were highly beneficial during the implementation of the project's infrastructure.
+
+Finally, I am thankful for the opportunity to undertake this project, which has been a deeply rewarding learning experience.
+\newpage
+
+
+% ==========================================
+% TABLE OF CONTENTS
+% ==========================================
+\onehalfspacing 
+\tableofcontents
+\newpage
+
+\clearpage % Ensures all front matter is printed before saving the number
+\newcounter{romanpages} % Creates a custom memory variable
+\setcounter{romanpages}{\value{page}} % Saves the current roman page number
+
+% --- Main Report Numbering ---
+\pagenumbering{arabic}
+
+% ==========================================
+% MAIN REPORT
+% ==========================================
+\section{Introduction}
+\subsection{Background}
+Modern enterprise architectures have undergone a significant paradigm shift, transitioning from tightly coupled monolithic systems to distributed microservice architectures. This evolution is particularly evident in modern networking, where Software-Defined Networking (SDN) decouples the network's high-level routing logic (the control plane) from the underlying physical hardware (the data plane).
+
+This project centers on the global control plane of a distributed SDN Internet Exchange Point (IXP) bandwidth auction system. The architecture is composed of several independent Go-based microservices: an \textbf{API Gateway} that enforces policy and handles agent bids, an \textbf{Auction Runner} that acts as the economic engine to continuously clear auctions, and a \textbf{Telemetry Processor} that consumes raw switch counters from the data plane via Kafka. Because these services are distributed, they rely on Atomix—a distributed consensus framework—to maintain shared state, such as bid histories and customer credits. While this microservice approach provides high scalability and fault isolation, it introduces intricate inter-service dependencies that are difficult to monitor.
+
+\subsection{Project Motivation}
+As systems become more distributed, the nature of system failures changes. In traditional environments, a failure was often binary: a server crashed, and an alert was triggered. However, in containerized microservice architectures orchestrated by Kubernetes, "silent failures" become a critical risk.
+
+Traditional infrastructure monitoring relies heavily on liveness and readiness probes, which only verify if a Kubernetes pod is running. While Kubernetes is highly effective at detecting hard crashes and restarting failed pods, it is completely blind to business-logic degradation and inter-service congestion. For example, if a critical dependency like the Atomix consensus store experiences severe network congestion or a degraded state, its response times will spike, causing requests to time out. In this scenario, Kubernetes will still report the API Gateway pod as perfectly "healthy" and running because its container has not crashed. The infrastructure looks fine, but the system is silently failing to process incoming bids or read network flows due to the underlying dependency timeouts. Because this project involves an economic system (a bandwidth auction), these silent failures, stalled queues, or dependency chain breaks can lead to severe data inconsistency and financial discrepancies.
+
+Therefore, there is a critical need to move beyond basic infrastructure monitoring. The motivation of this project is to implement "System-Level Health" observability—a framework capable of seeing inside the application code to monitor the success of actual business logic, track the latency and health of inter-service dependencies, and instantly alert human operators when the system degrades, even if the underlying Kubernetes infrastructure appears perfectly healthy.
+
+\subsection{Project Objective}
+The primary objective of this project is to design, implement, and validate an enterprise-grade observability and alerting pipeline for the SDN global control plane. To achieve this, the project targets the following specific goals:
+
+\begin{itemize}
+    \item \textbf{Instrument Microservices with OpenTelemetry:} Integrate OpenTelemetry—an industry-standard open-source observability framework—into the control plane microservices to generate custom, system-level telemetry. This includes tracking business-specific metrics such as Atomix read/write errors, API policy violations, and Kafka processing throughput.
+
+    \item \textbf{Decouple Telemetry from Application Logic:} Implement fail-safe observability mechanisms (e.g., context timeouts and observable gauges) to ensure that downstream dependency failures do not cause goroutine starvation or crash the primary application threads.
+
+    \item \textbf{Establish a Continuous Monitoring Pipeline:} Deploy and configure Prometheus to continuously scrape the OpenTelemetry Collector, evaluating the incoming metrics against predefined business rules and error thresholds.
+
+    \item \textbf{Implement a Real-Time Alerting Mechanism:} Configure Alertmanager to intercept critical alerts from Prometheus and route them instantly to a network administrator via a Telegram bot.
+
+    \item \textbf{Validate "Silent Failure" Detection:} Prove the efficacy of the pipeline by conducting simulated "soft failures"—such as dependency degradation, network congestion, or database unavailability. The goal is to demonstrate that the custom telemetry successfully detects these business-logic interruptions and triggers appropriate alerts prior to any intervention by infrastructure-level health checks.
+\end{itemize}
+
+\include{chapter2}
+
+\include{chapter3}
+
+\include{chapter4}
+
+\include{chapter5}
+
+\include{chapter6}
+
+\include{chapter7}
+
+% ==========================================
+% REFERENCES
+% ==========================================
+\clearpage
+\pagenumbering{roman} % Switches back to i, ii, iii... (but resets to i)
+\setcounter{page}{\value{romanpages}} % Loads your saved number!
+
+\phantomsection
+\addcontentsline{toc}{section}{References}
+\bibliographystyle{apalike} % Adheres to APA format 
+\bibliography{references} % Requires a 'references.bib' file in your project
+
+% ==========================================
+% APPENDICES
+% ==========================================
+\newpage
+\appendix
+\singlespacing
+\section{Source Code}
+The complete source code for this project can be found at: \url{https://github.com/chew01/ixp-gcp/tree/feat/observability}.
+\end{document}

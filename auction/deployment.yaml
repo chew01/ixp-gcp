@@ -20,8 +20,6 @@ spec:
       - name: auction-runner
         image: auction-runner:local
         env:
-          - name: KAFKA_BOOTSTRAP
-            value: "ixp-kafka-kafka-bootstrap:9092"
           - name: SCENARIO_PATH
             value: "/etc/scenario/scenario.yaml"
           - name: OTEL_SERVICE_NAME

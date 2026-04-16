@@ -3,22 +3,33 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"os"
 
 	localotel "github.com/chew01/ixp-gcp/shared/otel"
 	"github.com/chew01/ixp-gcp/shared/scenario"
+	"go.opentelemetry.io/otel"
 )
 
 func main() {
 	ctx := context.Background()
 
+	// Enable OTel SDK error logging to diagnose telemetry export failures
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		slog.Error("OpenTelemetry SDK Error", "error", err)
+	}))
+
 	otelShutdown, err := localotel.SetupOTelSDK(ctx)
 	if err != nil {
-		log.Printf("Failed to setup OTel SDK: %v", err)
+		slog.Error("Failed to setup OTel SDK", "error", err)
 		return
 	}
 	localotel.InitInstruments()
+	InitTelemetryMetrics()
+	localotel.InitAtomixMetrics("telemetry")
+	localotel.InitKafkaMetrics("telemetry")
+
+	slog.Info("Telemetry service initializing")
 	defer func() {
 		err = errors.Join(err, otelShutdown(context.Background()))
 	}()
@@ -35,20 +46,25 @@ func main() {
 
 	scene, err := scenario.Load(scenarioPath)
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("Failed to load scenario", "path", scenarioPath, "error", err)
+		os.Exit(1)
 	}
+	slog.Info("Scenario loaded", "path", scenarioPath, "kafka_topic", scene.TelemetryKafkaTopic)
 
 	tlsCfg, err := newKafkaTLSConfig()
 	if err != nil {
-		log.Fatalf("Kafka TLS config: %v", err)
+		slog.Error("Kafka TLS config failed", "error", err)
+		os.Exit(1)
 	}
 
 	consumer, err := NewConsumer(ctx, kafkaBootstrap, scene.TelemetryKafkaTopic, kafkaDialer(tlsCfg))
 	if err != nil {
-		log.Fatalf("Failed to create consumer: %v", err)
+		slog.Error("Failed to create consumer", "kafka_bootstrap", kafkaBootstrap, "topic", scene.TelemetryKafkaTopic, "error", err)
+		os.Exit(1)
 	}
 	defer consumer.Close()
 
-	log.Println("Telemetry service started, consuming from", scene.TelemetryKafkaTopic)
+	slog.Info("Telemetry service started", "kafka_bootstrap", kafkaBootstrap, "topic", scene.TelemetryKafkaTopic)
+	slog.Info("Consumer starting; listening for incoming flows...", "kafka_bootstrap", kafkaBootstrap, "topic", scene.TelemetryKafkaTopic)
 	consumer.Run(ctx)
 }

@@ -1,3 +1,12 @@
+// Package strategy — exploratory (EMA-based)
+//
+// DEPRECATED: This strategy is retained solely for the negative-result experiment
+// (Experiment 9). EMA-based price-following is theoretically misaligned with the
+// uniform-price (second-price) auction mechanism used by this system. In a
+// second-price auction the dominant strategy is to bid your true valuation, not to
+// track the clearing price. See docs/AGENTS.md §EMA for the full argument.
+//
+// Do not use this strategy in production or new experiments.
 package strategy
 
 import (

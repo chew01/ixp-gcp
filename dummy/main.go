@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"log/slog"
 	"math/rand/v2"
 	"os"
 
@@ -19,7 +18,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to setup otel: %v", err)
 	}
-	defer shutdown(ctx)
+	defer func() {
+		if err := shutdown(ctx); err != nil {
+			log.Printf("otel shutdown error: %v", err)
+		}
+	}()
 
 	otel.InitInstruments()
 
@@ -39,11 +42,9 @@ func main() {
 
 	scene, err := scenario.Load(scenarioPath)
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to load scenario",
-			"error", err,
-			"path", scenarioPath,
-		)
+		log.Fatalf("Failed to load scenario: %v (path: %s)", err, scenarioPath)
 	}
+	log.Printf("Kafka bootstrap configured: %s, topic: %s", kafkaBootstrap, scene.TelemetryKafkaTopic)
 
 	tlsCfg, err := newKafkaTLSConfig()
 	if err != nil {

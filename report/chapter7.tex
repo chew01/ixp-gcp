@@ -1,0 +1,21 @@
+\section{Project Summary}
+
+This project designed and implemented an observability-first control-plane architecture for a distributed SDN bandwidth-auction system. The resulting pipeline combines application instrumentation, centralized telemetry collection, metric-based alerting, and operator notification to support incident detection and diagnosis under realistic failure conditions.
+
+The evaluation results indicate that cross-signal correlation across metrics, logs, traces, and alerts is effective for identifying both dependency degradation and request-path congestion. In particular, the scenario-based validation demonstrates that domain-level telemetry can expose control-plane stress conditions that are not visible through infrastructure-level health checks alone.
+
+\subsection{Limitations}
+
+Despite the positive evaluation outcomes, two important limitations remain.
+
+First, system health metrics are not comprehensively monitored at the cluster level because an OpenTelemetry Operator is not currently deployed in the environment. The present workaround is the use of a custom bid-submission counter to track bid-flow behavior and support congestion detection. While this workaround is useful for the evaluated scenarios, it does not provide complete system-health coverage across all services and runtime dimensions.
+
+Second, the current architecture places the OpenTelemetry Collector in a centralized role, which introduces a single point of failure for telemetry ingestion. If the collector becomes unavailable, metric export continuity is disrupted and observability quality degrades significantly.
+
+\subsection{Future Directions}
+
+A practical next step is to strengthen telemetry resilience by moving from a purely centralized collector model toward per-service sidecar collectors. Deploying an OpenTelemetry Collector sidecar alongside each service can reduce reliance on a single shared collector instance and improve fault isolation in the telemetry path.
+
+This direction introduces a clear trade-off: improved telemetry availability at the cost of higher resource consumption and additional operational complexity. Future work should therefore evaluate this design with explicit resource-budget analysis and operational benchmarking to determine whether the resilience gains justify the overhead for production-scale deployment.
+
+Another possible future extension is to use observed business metrics to adapt auction parameters over time. For example, if bid prices stay consistently above the reservation price for a long period, the system could raise the reservation price in a later version. That would turn the observed metrics into an input for a higher-level control policy, but it should remain a future enhancement rather than part of the current implementation.

@@ -10,8 +10,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-var serviceName = os.Getenv("OTEL_SERVICE_NAME")
-
 // Helper to inject context into a map-like carrier
 type StringMapCarrier map[string]string
 
@@ -27,8 +25,12 @@ var (
 )
 
 // InitInstruments sets up the OTel-integrated logger, tracer, and meter.
-// Must be called after setupOTelSDK.
+// Must be called after SetupOTelSDK.
 func InitInstruments() {
+	serviceName := os.Getenv("OTEL_SERVICE_NAME")
+	if serviceName == "" {
+		serviceName = "ixp-service"
+	}
 	Logger = otelslog.NewLogger(serviceName)
 	Tracer = otel.Tracer(serviceName)
 	Meter = otel.Meter(serviceName)

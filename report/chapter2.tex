@@ -1,0 +1,281 @@
+\section{Technical Background and System Context}
+
+Modern Internet Exchange Points (IXPs) and Software-Defined Networks (SDNs) operate as complex distributed systems where multiple stakeholders compete for shared network resources. Understanding observability in these environments requires grounding in three foundational concepts: (1) the architectural separation between control and data planes, (2) the economic mechanisms that govern resource allocation, and (3) the role of distributed consensus in maintaining system correctness. This chapter provides the technical context necessary to understand why traditional infrastructure-level monitoring (Pod health, CPU usage, network connectivity) is insufficient for detecting business logic failures in control plane systems.
+
+\subsection{Software-Defined Networks and Control Plane Architecture}
+
+\subsubsection{Traditional Network vs. SDN Model}
+
+In conventional networks, forwarding decisions are made by individual network devices (switches, routers) using locally configured policies, making troubleshooting and large-scale policy changes difficult and error-prone. The control plane---the logic that decides \textit{where} traffic goes---is tightly coupled to the data plane---the hardware that actually \textit{forwards} traffic.
+
+Software-Defined Networks decouple these concerns: the data plane (switches) becomes simple forwarding elements, while the control plane runs as a centralized or distributed system making routing decisions. This separation offers significant advantages:
+
+\begin{itemize}
+    \item \textbf{Programmability}: Control logic can be defined in software and deployed dynamically
+    \item \textbf{Centralized visibility}: A single system has complete knowledge of network state
+    \item \textbf{Rapid policy updates}: New rules can be applied instantaneously across the network
+\end{itemize}
+
+However, this decoupling introduces a critical observability challenge: \textbf{a failure in the control plane software is invisible to the data plane}. A switch continues forwarding packets normally, even if the control plane has crashed or entered an inconsistent state. From the data-plane perspective, system behavior may still appear healthy.
+
+\subsubsection{The IXP Control Plane}
+
+An Internet Exchange Point control plane must:
+
+\begin{enumerate}
+    \item \textbf{Accept resource requests} from member networks (for example, requested bandwidth between specific ingress and egress ports)
+    \item \textbf{Allocate resources fairly} according to economic principles or policy rules
+    \item \textbf{Update switch policies} in real-time to enforce the allocations
+    \item \textbf{Track state consistently} across time and port configurations
+    \item \textbf{Report metrics} back to participants so they can adjust their behavior
+\end{enumerate}
+
+In a centralized control plane, all five of these functions run in a single service or tightly coordinated set of microservices. If any single function fails---say, the auction engine crashes---the entire system can enter a ``soft failure'' state:
+
+\begin{itemize}
+    \item Switches continue forwarding traffic (data plane operational)
+    \item Existing network connections remain stable (no dropped packets)
+    \item New resource requests cannot be processed (business logic broken)
+    \item Pod health checks pass (Kubernetes sees the container running)
+    \item Operators may remain unaware of the problem until incident reports are raised
+\end{itemize}
+
+This is the core observability challenge that motivates this work.
+
+\subsubsection{Microservices and State Management}
+
+Modern IXP control planes, including the system observed in this project, decompose the monolithic control logic into microservices \citep{babalGrpcMicroservicesGo}:
+
+\begin{itemize}
+    \item \textbf{API Gateway}: Accepts bids/requests, enforces authentication, routes to appropriate backend services
+    \item \textbf{Auction Runner}: Runs the bandwidth allocation algorithm, computes winners, clearing prices
+    \item \textbf{Telemetry Processor}: Consumes data from the physical network, transforms raw metrics into business-level insights
+    \item \textbf{Distributed State Store}: Maintains consensus across replicas to ensure consistent state even if nodes fail
+\end{itemize}
+
+Each microservice has specialized responsibilities and communicates through a combination of synchronous HTTP REST calls and asynchronous event streams. Specifically:
+\begin{itemize}
+    \item Customer agents submit bids to the API Gateway via synchronous HTTP REST
+    \item The Auction Runner publishes clearing results to Kafka; downstream Local Control Plane components consume these events asynchronously to enforce policies in the data plane
+    \item The Telemetry Service ingests flow metrics from Kafka and updates state in Atomix
+\end{itemize}
+
+This mixed synchronous/asynchronous architecture provides fault isolation---one service can fail without immediately crashing others---but introduces new observability challenges:
+
+\begin{enumerate}
+    \item \textbf{Partial workflow completion}: Multi-step control-plane workflows may complete only some stages (for example, a request is accepted but downstream processing is delayed), creating business-level inconsistency while all pods remain healthy.
+    \item \textbf{Dependency instability}: Temporary degradation in external dependencies (state store, message broker, or network path) can increase latency and retry behavior without causing immediate service crashes.
+    \item \textbf{Hidden performance degradation}: Services may remain available while response time, queueing delay, and end-to-end completion time gradually worsen, leading to timeouts and missed control-plane deadlines that are invisible to basic health checks.
+\end{enumerate}
+
+Observing these systems requires understanding not just whether pods are running, but whether they are correctly processing requests end-to-end \citep{majorsObservabilityEngineering2022}.
+
+\subsection{Bandwidth Auction Mechanisms}
+
+\subsubsection{Economic Motivation}
+
+Bandwidth at an IXP is a shared resource among member networks. Without explicit allocation mechanisms, the network would operate under first-come-first-served or equal-share policies, which may not reflect members' actual demand or willingness to pay.
+
+Auction mechanisms introduce economic efficiency: participants can express their demand and willingness to pay, and the system allocates bandwidth to maximize overall utility or revenue. The specific auction design---uniform-price sealed-bid, Vickrey-Clarke-Groves, or others---determines how fairly and efficiently bandwidth is distributed.
+
+\subsubsection{Sealed-Bid Auction Model}
+
+The system studied in this project uses a periodic sealed-bid auction executed in repeated intervals (rounds):
+
+\textbf{Auction Flow per Interval:}
+
+\begin{enumerate}
+    \item \textbf{Bidding Phase}: Customer agents submit bids specifying:
+    \begin{itemize}
+        \item Ingress port and egress port (if I send traffic from port 60 to port 132...)
+        \item Number of bandwidth units (...I want 1000 units...)
+        \item Maximum price per unit (...and I'll pay up to 100 SGD per unit)
+    \end{itemize}
+    
+    \item \textbf{Auction Clearing Phase}: Once the bidding window for the interval closes, the auction runner computes the allocation:
+    \begin{itemize}
+        \item Filter bids by eligibility (customer owns the ingress port)
+        \item Sort by price (highest first)
+        \item Allocate bandwidth in order until capacity is exhausted
+        \item Compute clearing price: the maximum price among winning bids (or a variation thereof)
+    \end{itemize}
+    
+    \item \textbf{Results Distribution}:
+    \begin{itemize}
+        \item Winners learn their allocation and the clearing price
+        \item Losers learn they were not selected
+        \item Clearing outcomes are published to Kafka for downstream enforcement
+    \end{itemize}
+    
+    \item \textbf{Switch Policy Updates}:
+    \begin{itemize}
+        \item The Local Control Plane consumes clearing outputs from Kafka
+        \item Updates switch policies in the data plane to enforce allocations
+        \item Begins metering traffic to track usage
+    \end{itemize}
+    
+    \item \textbf{Next Interval Begins}: The process repeats with a new bid collection window, creating a continuous interval-based control loop.
+\end{enumerate}
+
+\subsubsection{Observability in Auction Systems}
+
+From an observability perspective, a bandwidth auction presents several potential risk patterns that may be inferred from global control-plane signals:
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabularx}{\linewidth}{|l|X|X|}
+\hline
+\textbf{Potential Issue} & \textbf{Indicative Signal in Global Control Plane} & \textbf{Possible Operational Impact} \\
+\hline
+Bid intake degradation & API Gateway bid latency or timeout rate rises; bid-write errors to Atomix increase & Some bids may miss the interval window \\
+\hline
+Auction clearing delay & Auction Runner clearing duration increases, or clearing outputs are delayed & Allocations may be delayed for one or more intervals \\
+\hline
+Telemetry continuity risk & Telemetry consume/publish counters drop or stop progressing & Control-loop state updates may be delayed or missing for one or more intervals \\
+\hline
+State-store stress & Atomix read/write latency increases or error rate spikes across services & Cross-service coordination may degrade and deadlines may be missed \\
+\hline
+\end{tabularx}
+\caption{Failure modes in bandwidth auction systems and their observability challenges.}
+\label{table:auction_failures}
+\end{table}
+
+The listed patterns are conservative and limited to signals observable from the global control plane. They are intended as warning indicators that require correlation with logs, traces, and system context, rather than as definitive proof of root cause.
+
+\subsection{Distributed State Management}
+
+\subsubsection{The Role of Consensus}
+
+In a centralized control plane running on a single server, state is easy to manage: read or write the local database. But a single server is a single point of failure. If that server crashes, the entire control plane is down.
+
+To build a fault-tolerant control plane, the state must be replicated across multiple servers. This introduces a fundamental challenge: if different replicas receive updates at different times, they diverge, and clients may receive inconsistent answers.
+
+\textbf{Distributed consensus} addresses this challenge: it is a protocol that ensures all replicas agree on a single, consistent ordering of updates, even if some replicas crash or network partitions occur.
+
+\subsubsection{Atomix Distributed State Store}
+
+The system studied in this project uses Atomix, an open-source distributed consensus framework. Atomix provides:
+
+\begin{itemize}
+    \item \textbf{Replicated maps}: Key-value stores where each write is committed to a distributed log
+    \item \textbf{Consensus guarantees}: Writes are persistent and consistent even if nodes fail
+    \item \textbf{Strong consistency}: All readers see the same committed values (not ``eventual consistency'')
+    \item \textbf{Lean semantics}: Simple get/put operations without complex transactions
+\end{itemize}
+
+In this project, Atomix is used as a distributed key-value store. Services use simple \texttt{Put(key, value)} and \texttt{Get(key)} operations over shared maps so control-plane state remains consistent across services.
+
+\subsubsection{Critical Path: Bids $\rightarrow$ Auction Clearing $\rightarrow$ Enforcement}
+
+At a high level, each interval follows a fixed dependency chain: agents read flow state via the API, submit bids, the auction computes allocations, and clearing outputs are propagated for enforcement. The detailed service-by-service sequence is defined in Chapter 3; here the key point is dependency criticality rather than message-level mechanics.
+
+Bid intake and auction computation depend on Atomix being available and correct, while policy enforcement depends on Kafka delivery and the Local Control Plane consumer. If Atomix:
+
+\begin{itemize}
+    \item Becomes unavailable (partition, all replicas down): Control plane cannot read or write state $\rightarrow$ entire system halts
+    \item Has replication lag (slow network): Auction clearing may read incomplete bid state within interval deadlines $\rightarrow$ wrong allocations
+    \item Has bugs in consensus protocol: Replicas diverge $\rightarrow$ different views of port allocation
+\end{itemize}
+
+From the perspective of pod health checks, Atomix pods may appear ``Running'', yet if the consensus protocol is stuck, the system is functionally broken.
+
+\subsubsection{Failure Modes in Distributed Systems}
+
+Distributed control planes introduce failure modes that are often \textit{degradations} rather than crashes:
+
+\begin{itemize}
+    \item \textbf{Partitioned connectivity}: replicas remain running but cannot coordinate reliably.
+    \item \textbf{Inconsistent progress}: parts of a workflow complete while downstream steps stall.
+    \item \textbf{Slow consensus path}: write and read latency rises, delaying control decisions.
+\end{itemize}
+
+These conditions usually pass basic health checks, but they can still break business correctness.
+
+\subsection{The Observability Gap: Hard Crashes vs. Soft Failures}
+
+\subsubsection{Hard Failures (Kubernetes-Visible)}
+
+A \textbf{hard failure} is complete service unavailability (for example, process crash or OOM kill). Kubernetes already handles this well through probes, restarts, and scheduling.
+
+\subsubsection{Soft Failures: Congestion and Latency (Invisible to Kubernetes)}
+
+A \textbf{soft failure} occurs when services remain \texttt{Running} but fail to meet timing and correctness expectations. Typical symptoms are increased latency, queue buildup, delayed state propagation, and request timeouts across dependent services.
+
+\subsubsection{Why Kubernetes and Standard Metrics Cannot Detect Congestion Failures}
+
+Kubernetes probes check \textit{availability}, not \textit{performance}:
+
+\begin{itemize}
+    \item \textbf{Liveness probe}: confirms process survival, not request quality.
+    \item \textbf{Readiness probe}: confirms basic reachability, not end-to-end deadline compliance.
+\end{itemize}
+
+Traditional infrastructure metrics also miss congestion failures:
+
+\begin{itemize}
+    \item \textbf{CPU and memory}: may look normal while requests still queue or timeout.
+    \item \textbf{Network throughput}: does not reveal whether control decisions arrive in time.
+\end{itemize}
+
+\subsubsection{The Root Cause: Dependency Chain Latency}
+
+The critical path for each auction interval is latency-sensitive at multiple steps:
+
+\begin{enumerate}
+    \item Customer agent fetches /flows endpoint (depends on: Telemetry Service latency in Atomix)
+    \item Customer agent submits bid (depends on: API Gateway latency + Atomix write latency)
+    \item Auction Runner computes clearing (depends on: reading all bids from Atomix)
+    \item Auction Runner publishes clearing outputs to Kafka (depends on: broker availability + publish latency)
+    \item Telemetry pipeline refreshes flow state for the next interval (depends on: Kafka consumption + Atomix write latency)
+\end{enumerate}
+
+If one step slows down, downstream steps accumulate delay. The system may remain available but still violate control-plane deadlines and service expectations.
+
+\subsubsection{Observability Requirements as Design Goals}
+
+Not every failure condition can be tested in one evaluation. For this reason, the observability requirements in this project are presented as design goals. These goals describe the evidence needed to detect and diagnose soft failures along the critical path:
+
+\begin{enumerate}
+    \item \textbf{Per-operation latency metrics}:
+    \begin{itemize}
+        \item Time to write bid to Atomix (latency percentiles: p50, p95, p99)
+        \item Time to read flows from Atomix
+        \item Time for Auction Runner to clear (from all bids received to results written)
+        \item Time for telemetry updates to persist flow state (from Kafka message to Atomix write)
+    \end{itemize}
+    
+    \item \textbf{Request timeout and error monitoring}:
+    \begin{itemize}
+        \item Timeout rate and failure rate per operation type
+        \item Alerts when thresholds indicate potential service-objective violations
+    \end{itemize}
+    
+    \item \textbf{Dependency health indicators}:
+    \begin{itemize}
+        \item Atomix read/write latency
+        \item Kafka publish and consumer lag
+        \item Telemetry flow-update continuity used by agents
+    \end{itemize}
+    
+    \item \textbf{End-to-end control-loop visibility}:
+    \begin{itemize}
+        \item Total time from bid submission to clearing publication and observable state update
+        \item Bottleneck localization when one stage appears to degrade
+    \end{itemize}
+\end{enumerate}
+
+\subsection*{Summary}
+
+The bandwidth auction control plane is a distributed system where:
+
+\begin{itemize}
+    \item \textbf{Control and data planes are decoupled}: Failures in the control plane are invisible to the data plane (the switch continues forwarding).
+    \item \textbf{Consensus-based state management}: Relies on Atomix to maintain a consistent view across multiple replicas; failures here are not obvious (all replicas may appear healthy but diverge).
+    \item \textbf{Asynchronous processing}: Auction and telemetry pipelines exchange events through Kafka; failures may be delayed or silent.
+    \item \textbf{Economic contracts}: Business correctness depends on all steps of the auction proceeding correctly; partial execution leads to SLA violations without visible symptoms.
+\end{itemize}
+
+Traditional Kubernetes-level observability (pod health, CPU, memory) is insufficient because it primarily detects hard failures. Soft failures---where the control plane may violate timing or correctness expectations despite appearing healthy---require business-aware instrumentation: metrics, traces, logs, and alerts that provide evidence of system behavior rather than process availability alone.
+
+Chapter 4 presents an application-level observability framework for auction, state-store, and telemetry paths. In evaluated scenarios, it improved incident visibility and diagnosis; broader validation remains future work.

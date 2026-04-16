@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -77,14 +76,16 @@ func selectStrategy(name string, params map[string]string) (strategy.Bidder, err
 		return strategy.DemandCorrected{}, nil
 	case "price_insensitive":
 		return strategy.NewPriceInsensitive(params), nil
-	case "backoff":
-		return strategy.NewBackoff(params), nil
 	case "budget_aware":
 		return strategy.NewBudgetAware(params), nil
 	case "exploratory":
 		return strategy.NewExploratory(params), nil
 	case "q_learning":
 		return strategy.NewQLearning(params), nil
+	case "valuation_based":
+		return strategy.ValuationBased{}, nil
+	case "throughput_optimizer":
+		return strategy.NewThroughputOptimizer(params), nil
 	default:
 		return nil, fmt.Errorf("unknown strategy %q", name)
 	}
@@ -95,11 +96,12 @@ func main() {
 	// Set up OpenTelemetry.
 	otelShutdown, err := localotel.SetupOTelSDK(ctx)
 	if err != nil {
-		log.Println("Failed to setup otel")
-		return
+		log.Fatalf("Failed to setup otel: %v", err)
 	}
 	defer func() {
-		err = errors.Join(err, otelShutdown(ctx))
+		if shutdownErr := otelShutdown(ctx); shutdownErr != nil {
+			log.Printf("otel shutdown error: %v", shutdownErr)
+		}
 	}()
 	localotel.InitInstruments()
 
@@ -286,17 +288,28 @@ func placeBidForFlow(ctx context.Context, client *http.Client, cfg config, scene
 	}
 	span.SetAttributes(attribute.Bool("flow_found", true))
 
-	lastClearing := fetchLastClearingPrice(ctx, client, cfg, egress)
+	lastClearing, lastAllocated := fetchLastAuctionResult(ctx, client, cfg, egress)
+
+	// Look up this customer's valuation_per_unit from the scenario.
+	var valuationPerUnit int
+	for _, c := range scene.Customers {
+		if c.ID == cfg.CustomerID {
+			valuationPerUnit = c.ValuationPerUnit
+			break
+		}
+	}
 
 	bidCtx := strategy.BidContext{
-		Scene:             scene,
-		CustomerID:        cfg.CustomerID,
-		SwitchID:          switchID,
-		IngressPort:       ingress,
-		EgressPort:        egress,
-		Metrics:           metrics,
-		Credits:           credits,
-		LastClearingPrice: lastClearing,
+		Scene:              scene,
+		CustomerID:         cfg.CustomerID,
+		SwitchID:           switchID,
+		IngressPort:        ingress,
+		EgressPort:         egress,
+		Metrics:            metrics,
+		Credits:            credits,
+		LastClearingPrice:  lastClearing,
+		ValuationPerUnit:   valuationPerUnit,
+		LastAllocatedUnits: lastAllocated,
 	}
 
 	units, priceU64, skip := strat.ComputeBid(bidCtx)
@@ -405,6 +418,7 @@ func fetchFlowMetrics(ctx context.Context, client *http.Client, cfg config, swit
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
+		span.SetStatus(codes.Error, "flow-not-found")
 		span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
 		return shared.FlowMetricsValue{}, &httpError{status: resp.StatusCode, err: fmt.Errorf("flow not found")}
 	}
@@ -431,7 +445,9 @@ func fetchFlowMetrics(ctx context.Context, client *http.Client, cfg config, swit
 	return shared.FlowMetricsValue{}, fmt.Errorf("empty flow metrics response")
 }
 
-func fetchLastClearingPrice(ctx context.Context, client *http.Client, cfg config, egress uint32) int {
+// fetchLastAuctionResult returns the clearing price and the caller's allocated
+// units from the most recent auction record for the given egress port.
+func fetchLastAuctionResult(ctx context.Context, client *http.Client, cfg config, egress uint32) (clearingPrice int, allocatedUnits uint64) {
 	ctx, span := localotel.Tracer.Start(ctx, "agent-fetch-last-clearing-price")
 	defer span.End()
 	span.SetAttributes(attribute.Int64("egress_port", int64(egress)))
@@ -440,33 +456,41 @@ func fetchLastClearingPrice(ctx context.Context, client *http.Client, cfg config
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		span.RecordError(err)
-		return 0
+		return 0, 0
 	}
 	req.Header.Set("X-Customer-ID", cfg.CustomerID)
 
 	resp, err := client.Do(req)
 	if err != nil {
 		span.RecordError(err)
-		return 0
+		return 0, 0
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
-		return 0
+		return 0, 0
 	}
 
 	var records []shared.AuctionHistoryRecord
 	if err := json.NewDecoder(resp.Body).Decode(&records); err != nil {
 		span.RecordError(err)
-		return 0
+		return 0, 0
 	}
 	if len(records) == 0 {
-		return 0
+		return 0, 0
 	}
 
-	// Take the last record in the slice as "most recent".
 	last := records[len(records)-1]
+
+	var units uint64
+	for _, alloc := range last.Allocations {
+		if alloc.CustomerID == cfg.CustomerID {
+			units += alloc.Units
+		}
+	}
+
 	span.SetAttributes(attribute.Int("auction.last_clearing_price", last.ClearingPrice))
-	return last.ClearingPrice
+	span.SetAttributes(attribute.Int("auction.units", int(units)))
+	return last.ClearingPrice, units
 }

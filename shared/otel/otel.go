@@ -3,6 +3,7 @@ package otel
 import (
 	"context"
 	"errors"
+	"log"
 	"os"
 	"time"
 
@@ -12,16 +13,23 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/log"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/trace"
 )
 
-var endpoint = os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-
 // SetupOTelSDK bootstraps the OpenTelemetry pipeline.
 // If it does not return an error, make sure to call shutdown for proper cleanup.
 func SetupOTelSDK(ctx context.Context) (func(context.Context) error, error) {
+	// Get endpoint with validation and default
+	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	if endpoint == "" {
+		endpoint = "localhost:4317"
+		log.Printf("OTEL_EXPORTER_OTLP_ENDPOINT not set, using default: %s", endpoint)
+	} else {
+		log.Printf("OTEL_EXPORTER_OTLP_ENDPOINT set to: %s", endpoint)
+	}
+
 	var shutdownFuncs []func(context.Context) error
 	var err error
 
@@ -47,7 +55,7 @@ func SetupOTelSDK(ctx context.Context) (func(context.Context) error, error) {
 	otel.SetTextMapPropagator(prop)
 
 	// Set up trace provider.
-	tracerProvider, err := newTracerProvider()
+	tracerProvider, err := newTracerProvider(endpoint)
 	if err != nil {
 		handleErr(err)
 		return shutdown, err
@@ -56,7 +64,7 @@ func SetupOTelSDK(ctx context.Context) (func(context.Context) error, error) {
 	otel.SetTracerProvider(tracerProvider)
 
 	// Set up meter provider.
-	meterProvider, err := newMeterProvider()
+	meterProvider, err := newMeterProvider(endpoint)
 	if err != nil {
 		handleErr(err)
 		return shutdown, err
@@ -66,7 +74,7 @@ func SetupOTelSDK(ctx context.Context) (func(context.Context) error, error) {
 	otel.SetMeterProvider(meterProvider)
 
 	// Set up logger provider.
-	loggerProvider, err := newLoggerProvider()
+	loggerProvider, err := newLoggerProvider(endpoint)
 	if err != nil {
 		handleErr(err)
 		return shutdown, err
@@ -86,15 +94,23 @@ func newPropagator() propagation.TextMapPropagator {
 }
 
 // Setup Tracer Provider
-func newTracerProvider() (*trace.TracerProvider, error) {
+func newTracerProvider(endpoint string) (*trace.TracerProvider, error) {
+	log.Printf("Creating tracer provider with endpoint: %s", endpoint)
+
+	// Use a timeout context to prevent hanging
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	traceExporter, err := otlptracegrpc.New(
-		context.Background(),
+		timeoutCtx,
 		otlptracegrpc.WithEndpoint(endpoint),
 		otlptracegrpc.WithInsecure(),
 	)
 	if err != nil {
+		log.Printf("Failed to create trace exporter: %v", err)
 		return nil, err
 	}
+	log.Printf("Trace exporter created successfully")
 
 	tracerProvider := trace.NewTracerProvider(
 		trace.WithBatcher(traceExporter,
@@ -105,15 +121,22 @@ func newTracerProvider() (*trace.TracerProvider, error) {
 }
 
 // Setup Meter Provider
-func newMeterProvider() (*metric.MeterProvider, error) {
+func newMeterProvider(endpoint string) (*metric.MeterProvider, error) {
+	log.Printf("Creating meter provider with endpoint: %s", endpoint)
+
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	metricExporter, err := otlpmetricgrpc.New(
-		context.Background(),
+		timeoutCtx,
 		otlpmetricgrpc.WithEndpoint(endpoint),
 		otlpmetricgrpc.WithInsecure(),
 	)
 	if err != nil {
+		log.Printf("Failed to create metric exporter: %v", err)
 		return nil, err
 	}
+	log.Printf("Metric exporter created successfully")
 
 	meterProvider := metric.NewMeterProvider(
 		metric.WithReader(metric.NewPeriodicReader(metricExporter,
@@ -124,18 +147,30 @@ func newMeterProvider() (*metric.MeterProvider, error) {
 }
 
 // Setup Logger Provider
-func newLoggerProvider() (*log.LoggerProvider, error) {
+func newLoggerProvider(endpoint string) (*sdklog.LoggerProvider, error) {
+	log.Printf("Creating logger provider with endpoint: %s", endpoint)
+
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	logExporter, err := otlploggrpc.New(
-		context.Background(),
+		timeoutCtx,
 		otlploggrpc.WithEndpoint(endpoint),
 		otlploggrpc.WithInsecure(),
 	)
 	if err != nil {
+		log.Printf("Failed to create log exporter: %v", err)
 		return nil, err
 	}
+	log.Printf("Log exporter created successfully")
 
-	loggerProvider := log.NewLoggerProvider(
-		log.WithProcessor(log.NewBatchProcessor(logExporter)),
+	loggerProvider := sdklog.NewLoggerProvider(
+		sdklog.WithProcessor(sdklog.NewBatchProcessor(logExporter,
+			// Reduce batch size to prevent buffering issues during high concurrency
+			sdklog.WithMaxQueueSize(512),
+			// Export frequently to prevent log truncation under load
+			sdklog.WithExportInterval(100*time.Millisecond),
+		)),
 	)
 	return loggerProvider, nil
 }

@@ -1,0 +1,65 @@
+version: v1
+name: experiment-4c-throughput-optimizer
+
+# Experiment 4C — Throughput Optimizer vs Conservative
+#
+# as12345 runs conservative; as67890 runs throughput_optimizer.
+# Traffic has two distinct phases to make the optimizer's demand-adaptive bidding
+# observable:
+#   - Phase 1 (intervals 1–5):  low demand (8 kbps/flow, 80 kbps total — below capacity)
+#   - Phase 2 (intervals 6+):   spike to 13 kbps/flow (130 kbps total — 30% over capacity)
+#
+# high_demand_kbps is a per-port threshold (ComputeBid receives per-port metrics).
+# Set to 10 so the spike rate of 13 kbps/port triggers high-demand mode while
+# the pre-spike rate of 8 kbps/port does not.
+#
+# Expected observations:
+#   - Phase 1: demandIsHigh=false. Optimizer bids reservation price with demand×0.5
+#     units — conservative allocation, preserving credits.
+#   - Phase 2 spike: demandIsHigh=true, priceIsCheap=false (clearing price is stable
+#     at 50, not below historical average). Optimizer enters follow-market mode:
+#     bidPrice=lastClearing(50), bidUnits=demand×1.05≈13 per port.
+#     Conservative bids throughput×1.1≈11 per port (no drop awareness).
+#     Optimizer wins ~10.8 kbps/port vs conservative's ~9.2 kbps/port (proportional
+#     allocation: 65 vs 55 units at the same price). Drop rate is lower for optimizer.
+#   - Utility gap: both agents pay clearing price 50, but optimizer accumulates
+#     more allocated units → higher (500−50)×units utility over the spike phase.
+#
+# Run duration: 25 auction intervals = ~12 minutes
+# Export: make export-metrics
+
+auction_result_kafka_topic: auction-results
+telemetry_kafka_topic: switch-telemetry
+
+reservation_price: 50
+auction_interval: 30s
+telemetry_interval: 1s
+
+switches:
+  - id: sw-1
+    ingress_ports: [1,2,3,4,5,6,7,8,9,10]
+    egress_ports: [0]
+    max_capacity: 100
+
+traffic:
+  pattern: spike
+  rate_kbps: 8
+  spike_after_intervals: 5
+  spike_rate_kbps: 13
+
+customers:
+  - id: as12345
+    switch_id: sw-1
+    ingress_ports: [1, 2, 3, 4, 5]
+    strategy: conservative
+    valuation_per_unit: 500
+
+  - id: as67890
+    switch_id: sw-1
+    ingress_ports: [6, 7, 8, 9, 10]
+    strategy: throughput_optimizer
+    strategy_params:
+      price_threshold: "0.8"
+      high_demand_kbps: "10"
+      price_window: "3"
+    valuation_per_unit: 500
