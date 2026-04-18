@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"strconv"
+	"sync"
 
 	"github.com/atomix/go-sdk/pkg/atomix"
 	"github.com/atomix/go-sdk/pkg/generic"
@@ -76,6 +77,7 @@ type BidStore interface {
 }
 
 type AtomixBidStore struct {
+	mu sync.RWMutex
 	// keyed by egress port, initialized lazily since ports are dynamic
 	maps map[uint32]atomixmap.Map[string, string]
 }
@@ -87,10 +89,18 @@ func NewAtomixBidStore() *AtomixBidStore {
 }
 
 func (s *AtomixBidStore) getOrCreateMap(ctx context.Context, egressPort uint32) (atomixmap.Map[string, string], error) {
+	s.mu.RLock()
+	if m, ok := s.maps[egressPort]; ok {
+		s.mu.RUnlock()
+		return m, nil
+	}
+	s.mu.RUnlock()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if m, ok := s.maps[egressPort]; ok {
 		return m, nil
 	}
-
 	mapID := fmt.Sprintf("bids-%d", egressPort)
 	m, err := atomix.Map[string, string](mapID).
 		Codec(generic.Scalar[string]()).
@@ -98,7 +108,6 @@ func (s *AtomixBidStore) getOrCreateMap(ctx context.Context, egressPort uint32) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to init bid map %s: %w", mapID, err)
 	}
-
 	s.maps[egressPort] = m
 	return m, nil
 }
