@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 
 import { useWebSocket } from "./hooks/useWebSocket";
@@ -45,8 +45,13 @@ export default function App() {
   const [flowKeys, setFlowKeys] = useState<string[]>([]);
   const [credits, setCredits] = useState<CreditsEntry[]>([]);
   const [lastEvent, setLastEvent] = useState<WSEvent<unknown> | null>(null);
+  const [lastAuctionDetail, setLastAuctionDetail] = useState<AuctionPayload | null>(null);
+  const lastToastedAuctionRef = useRef("");
   const [atomixHealthy, setAtomixHealthy] = useState(false);
   const [kafkaHealthy, setKafkaHealthy] = useState(false);
+  const [kafkaBootstrap, setKafkaBootstrap] = useState("");
+  const [kafkaBrokers, setKafkaBrokers] = useState(0);
+  const [atomixMapNames, setAtomixMapNames] = useState<string[]>([]);
 
   // Load scenario + initial data.
   useEffect(() => {
@@ -75,9 +80,18 @@ export default function App() {
     function poll() {
       fetch(`${BASE}admin/health`)
         .then((r) => r.json())
-        .then((h: { atomix: boolean; kafka: boolean }) => {
+        .then((h: {
+          atomix: boolean;
+          kafka: boolean;
+          kafka_bootstrap?: string;
+          kafka_brokers?: number;
+          atomix_maps?: string[];
+        }) => {
           setAtomixHealthy(h.atomix);
           setKafkaHealthy(h.kafka);
+          if (h.kafka_bootstrap) setKafkaBootstrap(h.kafka_bootstrap);
+          if (h.kafka_brokers != null) setKafkaBrokers(h.kafka_brokers);
+          if (h.atomix_maps) setAtomixMapNames(h.atomix_maps);
         })
         .catch(() => {
           setAtomixHealthy(false);
@@ -100,14 +114,14 @@ export default function App() {
       .then((data) => {
         if (!data?.credits) return;
         const utility = data.utility ?? {};
-        const entries: CreditsEntry[] = Object.entries(data.credits).map(
-          ([id, c]) => ({
+        const entries: CreditsEntry[] = Object.entries(data.credits)
+          .map(([id, c]) => ({
             customer: id,
             balance: c.starting_balance - c.total_spent,
             spent: c.total_spent,
             utility: utility[id] ?? 0,
-          })
-        );
+          }))
+          .filter((e) => e.spent > 0 || e.utility > 0);
         setCredits(entries);
       })
       .catch(console.error);
@@ -125,13 +139,15 @@ export default function App() {
       pushFeed({
         time: formatTime(new Date()),
         icon: "💸",
-        text: `${p.customer_id} → egress ${p.egress_port}: ${p.units}u @ ${p.unit_price}`,
+        text: `${p.customer_id} → egress ${p.egress_port}: ${p.units} kbps @ ${p.unit_price}/unit`,
         color: "#00e5ff",
+        category: "bid",
       });
     },
 
     flow_query: (ev) => {
       setLastEvent(ev as WSEvent<unknown>);
+      // Intentionally not added to feed — topology animation is sufficient.
     },
 
     auction: (ev) => {
@@ -141,30 +157,62 @@ export default function App() {
     auction_detail: (ev) => {
       const p = ev.payload as AuctionPayload;
       setLastEvent(ev as WSEvent<unknown>);
+      setLastAuctionDetail(p);
 
-      const allocs = (p.allocations ?? [])
-        .map((a) => `${a.customer_id}: ${a.units}u`)
-        .join(", ");
-      const msg = `Auction — egress ${p.egress_port} cleared @ ${p.clearing_price}${allocs ? ` — ${allocs}` : ""}`;
+      // Deduplicate: auction runner emits one message per allocation, all for the same egress+interval.
+      const toastKey = `${p.egress_port}-${p.interval || p.clearing_price}`;
+      if (lastToastedAuctionRef.current === toastKey) return;
+      lastToastedAuctionRef.current = toastKey;
 
-      toast(msg, {
-        duration: 6000,
-        style: {
-          background: "#161b22",
-          border: "1px solid #f78166",
-          color: "#e6edf3",
-          fontFamily: "'JetBrains Mono', monospace",
-          fontSize: 12,
-          maxWidth: 480,
-        },
-        icon: "🔨",
-      });
+      const allocLines = (p.allocations ?? []).map(
+        (a, i, arr) =>
+          `${i === arr.length - 1 ? "└" : "├"} ${a.customer_id.padEnd(14)} ${a.units} kbps`
+      );
+
+      toast(
+        <div
+          style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 12,
+            lineHeight: 1.6,
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 6, color: "#e6edf3" }}>
+            Egress Port {p.egress_port} — Auction Result
+          </div>
+          <div style={{ color: "#8b949e", marginBottom: 4 }}>
+            Clearing price: <span style={{ color: "#f78166" }}>{p.clearing_price}</span> /unit
+          </div>
+          {allocLines.map((line, i) => (
+            <div key={i} style={{ color: "#e6edf3", whiteSpace: "pre" }}>
+              {line}
+            </div>
+          ))}
+        </div>,
+        {
+          duration: 7000,
+          style: {
+            background: "#161b22",
+            border: "1px solid #f78166",
+            borderRadius: 8,
+            padding: "12px 16px",
+            maxWidth: 520,
+          },
+          icon: null,
+        }
+      );
+
+      const allocSummary = (p.allocations ?? [])
+        .map((a) => `${a.customer_id}: ${a.units} kbps`)
+        .join(" | ");
+      const feedText = `Egress ${p.egress_port} cleared @ ${p.clearing_price}/unit${allocSummary ? ` — ${allocSummary}` : ""}`;
 
       pushFeed({
         time: formatTime(new Date()),
         icon: "🔨",
-        text: msg,
+        text: feedText,
         color: "#f78166",
+        category: "auction",
       });
 
       // Refresh credits after auction settles.
@@ -179,6 +227,7 @@ export default function App() {
         icon: "💾",
         text: `${ev.from} ${p.op} ${p.map}`,
         color: "#d2a8ff",
+        category: "atomix",
       });
     },
 
@@ -199,6 +248,7 @@ export default function App() {
         const m = p.flows[k] as FlowMetrics;
         point[`${k} in`] = Math.round(m.throughput_kbps);
         point[`${k} eg`] = Math.round(m.egress_kbps);
+        point[`${k} drop%`] = Math.round(m.drop_rate_pct * 10) / 10;
       });
 
       setTelemetryHistory((prev) =>
@@ -212,8 +262,17 @@ export default function App() {
     },
   });
 
-  // Derived flow keys for chart lines.
-  const chartFlowKeys = flowKeys.flatMap((k) => [`${k} in`, `${k} eg`]);
+  // Only show flow keys with non-zero values in the latest data point.
+  const activeChartKeys = useMemo(() => {
+    if (telemetryHistory.length === 0) return flowKeys.flatMap((k) => [`${k} in`, `${k} eg`]);
+    const latest = telemetryHistory[telemetryHistory.length - 1];
+    const activeBase = flowKeys.filter((k) => {
+      const inVal = latest[`${k} in`];
+      const egVal = latest[`${k} eg`];
+      return (typeof inVal === "number" && inVal > 0) || (typeof egVal === "number" && egVal > 0);
+    });
+    return activeBase.flatMap((k) => [`${k} in`, `${k} eg`]);
+  }, [telemetryHistory, flowKeys]);
 
   return (
     <div
@@ -258,8 +317,16 @@ export default function App() {
           </span>
         )}
         <div style={{ marginLeft: "auto", display: "flex", gap: 12 }}>
-          <StatusPill label="Atomix" ok={atomixHealthy} />
-          <StatusPill label="Kafka" ok={kafkaHealthy} />
+          <StatusPill
+            label="Atomix"
+            ok={atomixHealthy}
+            detail={atomixMapNames.length > 0 ? `${atomixMapNames.length} maps` : undefined}
+          />
+          <StatusPill
+            label="Kafka"
+            ok={kafkaHealthy}
+            detail={kafkaBootstrap || undefined}
+          />
         </div>
       </header>
 
@@ -267,7 +334,7 @@ export default function App() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "1fr 260px",
+          gridTemplateColumns: "1fr minmax(320px, 35vw)",
           gridTemplateRows: "1fr",
           overflow: "hidden",
           minHeight: 0,
@@ -282,6 +349,9 @@ export default function App() {
             lastEvent={lastEvent}
             atomixHealthy={atomixHealthy}
             kafkaHealthy={kafkaHealthy}
+            atomixMapNames={atomixMapNames}
+            kafkaBrokers={kafkaBrokers}
+            lastAuctionDetail={lastAuctionDetail}
           />
         </div>
 
@@ -308,7 +378,7 @@ export default function App() {
         }}
       >
         <div style={{ borderRight: "1px solid #30363d", overflow: "hidden" }}>
-          <TelemetryChart data={telemetryHistory} flowKeys={chartFlowKeys} />
+          <TelemetryChart data={telemetryHistory} flowKeys={activeChartKeys} />
         </div>
         <div style={{ overflow: "hidden" }}>
           <CreditsChart data={credits} />
@@ -320,7 +390,7 @@ export default function App() {
 
 // ---- StatusPill -------------------------------------------------------------
 
-function StatusPill({ label, ok }: { label: string; ok: boolean }) {
+function StatusPill({ label, ok, detail }: { label: string; ok: boolean; detail?: string }) {
   return (
     <span
       style={{
@@ -330,7 +400,7 @@ function StatusPill({ label, ok }: { label: string; ok: boolean }) {
         background: "#0d1117",
         border: `1px solid ${ok ? "#3fb950" : "#f85149"}`,
         borderRadius: 20,
-        padding: "2px 8px",
+        padding: "2px 10px",
         fontSize: 10,
         fontFamily: "'JetBrains Mono', monospace",
         color: ok ? "#3fb950" : "#f85149",
@@ -338,6 +408,9 @@ function StatusPill({ label, ok }: { label: string; ok: boolean }) {
     >
       <span style={{ fontSize: 8 }}>●</span>
       {label}
+      {detail && (
+        <span style={{ color: "#8b949e", marginLeft: 2 }}>{detail}</span>
+      )}
     </span>
   );
 }

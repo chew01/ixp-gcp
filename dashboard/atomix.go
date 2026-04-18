@@ -191,6 +191,15 @@ func (s *DashboardStore) AllUtility(ctx context.Context) (map[string]int, error)
 	return out, nil
 }
 
+// MapNames returns the names of all currently-open Atomix maps.
+func (s *DashboardStore) MapNames() []string {
+	names := []string{"throughput-map", "credits-map", "auction-history", "utility-map"}
+	for ep := range s.bidMaps {
+		names = append(names, fmt.Sprintf("bids-%d", ep))
+	}
+	return names
+}
+
 // LatestAuction fetches the most recent AuctionHistoryRecord for a given egress port.
 func (s *DashboardStore) LatestAuction(ctx context.Context, egressPort uint64) (*shared.AuctionHistoryRecord, error) {
 	records, err := s.AllAuctions(ctx)

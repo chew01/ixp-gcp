@@ -189,6 +189,9 @@ interface TopologyGraphProps {
   lastEvent: WSEvent<unknown> | null;
   atomixHealthy: boolean;
   kafkaHealthy: boolean;
+  atomixMapNames?: string[];
+  kafkaBrokers?: number;
+  lastAuctionDetail?: AuctionPayload | null;
 }
 
 export function TopologyGraph({
@@ -198,6 +201,9 @@ export function TopologyGraph({
   lastEvent,
   atomixHealthy,
   kafkaHealthy,
+  atomixMapNames,
+  kafkaBrokers,
+  lastAuctionDetail,
 }: TopologyGraphProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<ServiceNodeType>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<AnimatedEdgeType>([]);
@@ -231,21 +237,39 @@ export function TopologyGraph({
     );
   }, [pods, setNodes]);
 
-  // Reflect atomix / kafka connectivity.
+  // Reflect atomix / kafka connectivity and surface extra metadata.
   useEffect(() => {
     setNodes((prev) =>
       prev.map((node) => {
         const nd = node.data as ServiceNodeData;
         if (node.id === "atomix") {
-          return { ...node, data: { ...nd, status: atomixHealthy ? "healthy" : "degraded" } };
+          const mapNames = atomixMapNames && atomixMapNames.length > 0 ? atomixMapNames : nd.mapNames;
+          return { ...node, data: { ...nd, status: atomixHealthy ? "healthy" : "degraded", mapNames, meta: undefined } };
         }
         if (node.id === "kafka") {
-          return { ...node, data: { ...nd, status: kafkaHealthy ? "healthy" : "offline" } };
+          const podInfo = kafkaBrokers && kafkaBrokers > 0
+            ? { desired: kafkaBrokers, ready: kafkaBrokers }
+            : nd.podInfo;
+          return { ...node, data: { ...nd, status: kafkaHealthy ? "healthy" : "offline", podInfo, meta: undefined } };
         }
         return node;
       })
     );
-  }, [atomixHealthy, kafkaHealthy, setNodes]);
+  }, [atomixHealthy, kafkaHealthy, atomixMapNames, kafkaBrokers, setNodes]);
+
+  // Show last auction time on Auction Runner node.
+  useEffect(() => {
+    if (!lastAuctionDetail) return;
+    const t = new Date();
+    const timeStr = t.toTimeString().slice(0, 8);
+    setNodes((prev) =>
+      prev.map((node) => {
+        if (node.id !== "auction-runner") return node;
+        const nd = node.data as ServiceNodeData;
+        return { ...node, data: { ...nd, meta: `last auction: ${timeStr}` } };
+      })
+    );
+  }, [lastAuctionDetail, setNodes]);
 
   // Fire packet animations on new events.
   useEffect(() => {
@@ -379,7 +403,7 @@ function workloadForNode(nodeId: string): string {
     "auction-runner": "auction-runner",
     "telemetry-service": "telemetry-service",
     "dummy-producer": "dummy-producer",
-    atomix: "atomix-consensus-storage",
+    atomix: "consensus-store",
   };
   return map[nodeId] ?? nodeId;
 }

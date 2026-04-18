@@ -20,14 +20,15 @@ var upgrader = websocket.Upgrader{
 
 // Server wires together the stores, hub, and health reporters.
 type Server struct {
-	store    *DashboardStore
-	hub      *Hub
-	poller   *Poller
-	consumer *AuctionConsumer // may be nil if Kafka is unavailable
+	store          *DashboardStore
+	hub            *Hub
+	poller         *Poller
+	consumer       *AuctionConsumer // may be nil if Kafka is unavailable
+	kafkaBootstrap string
 }
 
-func NewServer(store *DashboardStore, hub *Hub, poller *Poller, consumer *AuctionConsumer) *Server {
-	return &Server{store: store, hub: hub, poller: poller, consumer: consumer}
+func NewServer(store *DashboardStore, hub *Hub, poller *Poller, consumer *AuctionConsumer, kafkaBootstrap string) *Server {
+	return &Server{store: store, hub: hub, poller: poller, consumer: consumer, kafkaBootstrap: kafkaBootstrap}
 }
 
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
@@ -159,9 +160,16 @@ func (s *Server) adminBids(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminHealth(w http.ResponseWriter, r *http.Request) {
 	kafkaOK := s.consumer != nil && s.consumer.KafkaHealthy()
 	atomixOK := s.poller.AtomixHealthy()
-	writeJSON(w, map[string]bool{
-		"atomix": atomixOK,
-		"kafka":  kafkaOK,
+	brokers := 0
+	if s.consumer != nil {
+		brokers = s.consumer.BrokerCount()
+	}
+	writeJSON(w, map[string]any{
+		"atomix":          atomixOK,
+		"kafka":           kafkaOK,
+		"kafka_bootstrap": s.kafkaBootstrap,
+		"kafka_brokers":   brokers,
+		"atomix_maps":     s.store.MapNames(),
 	})
 }
 

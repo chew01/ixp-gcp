@@ -20,6 +20,7 @@ spec:
       containers:
         - name: dashboard
           image: dashboard:local
+          imagePullPolicy: Always
           ports:
             - name: http
               containerPort: 8082

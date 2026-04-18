@@ -250,6 +250,8 @@ deploy-dashboard:
 	kubectl set env deployment/dashboard KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
 	@[ -z "$(KAFKA_TLS_CA_FILE)" ] || kubectl set env deployment/dashboard \
 		KAFKA_TLS_CA_FILE=$(KAFKA_TLS_CA_FILE) KAFKA_TLS_CERT_FILE=$(KAFKA_TLS_CERT_FILE) KAFKA_TLS_KEY_FILE=$(KAFKA_TLS_KEY_FILE)
+	kubectl rollout restart deployment/dashboard
+	kubectl rollout status deployment/dashboard --timeout=120s
 
 # Port-forward the dashboard for local access (Minikube or cluster without ingress).
 dashboard-ui:

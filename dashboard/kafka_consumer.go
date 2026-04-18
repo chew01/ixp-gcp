@@ -18,10 +18,12 @@ import (
 // AuctionConsumer subscribes to the auction-results Kafka topic and emits
 // "auction" WebSocket events whenever a message arrives.
 type AuctionConsumer struct {
-	reader  *kafka.Reader
-	store   *DashboardStore
-	hub     *Hub
-	lastMsg atomic.Int64 // Unix nano of last received message
+	reader      *kafka.Reader
+	store       *DashboardStore
+	hub         *Hub
+	bootstrap   string
+	lastMsg     atomic.Int64 // Unix nano of last received message
+	brokerCount atomic.Int32
 }
 
 func NewAuctionConsumer(bootstrap, topic string, store *DashboardStore, hub *Hub) (*AuctionConsumer, error) {
@@ -38,10 +40,27 @@ func NewAuctionConsumer(bootstrap, topic string, store *DashboardStore, hub *Hub
 		cfg.Dialer = dialer
 	}
 	return &AuctionConsumer{
-		reader: kafka.NewReader(cfg),
-		store:  store,
-		hub:    hub,
+		reader:    kafka.NewReader(cfg),
+		store:     store,
+		hub:       hub,
+		bootstrap: bootstrap,
 	}, nil
+}
+
+// BrokerCount returns the last known number of Kafka brokers (0 if unknown).
+func (c *AuctionConsumer) BrokerCount() int { return int(c.brokerCount.Load()) }
+
+func (c *AuctionConsumer) refreshBrokerCount() {
+	conn, err := kafka.Dial("tcp", c.bootstrap)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	brokers, err := conn.Brokers()
+	if err != nil {
+		return
+	}
+	c.brokerCount.Store(int32(len(brokers)))
 }
 
 func (c *AuctionConsumer) Close() { c.reader.Close() }
@@ -57,6 +76,20 @@ func (c *AuctionConsumer) KafkaHealthy() bool {
 
 // Run blocks and consumes messages. Call in a goroutine.
 func (c *AuctionConsumer) Run(ctx context.Context) {
+	go func() {
+		c.refreshBrokerCount()
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				c.refreshBrokerCount()
+			}
+		}
+	}()
+
 	for {
 		msg, err := c.reader.ReadMessage(ctx)
 		if err != nil {

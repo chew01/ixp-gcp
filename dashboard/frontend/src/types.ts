@@ -116,7 +116,8 @@ export interface ServiceNodeData extends Record<string, unknown> {
   role: string;
   podInfo?: PodInfo;
   status?: "healthy" | "degraded" | "offline" | "unknown";
-  meta?: string; // e.g. last clearing price, last timestamp
+  meta?: string; // shown below pod count (gray)
+  mapNames?: string[]; // shown on hover as a tooltip list
   customerId?: string; // for agent nodes
 }
 
@@ -128,6 +129,7 @@ export interface FeedEntry {
   icon: string;
   text: string;
   color: string;
+  category?: "auction" | "bid" | "atomix";
 }
 
 // ---- Animated packet --------------------------------------------------------

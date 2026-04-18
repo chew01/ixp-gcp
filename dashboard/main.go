@@ -55,7 +55,7 @@ func main() {
 	}
 
 	// HTTP server.
-	srv := NewServer(store, hub, poller, consumer)
+	srv := NewServer(store, hub, poller, consumer, kafkaBootstrap)
 	mux := http.NewServeMux()
 	srv.RegisterRoutes(mux)
 

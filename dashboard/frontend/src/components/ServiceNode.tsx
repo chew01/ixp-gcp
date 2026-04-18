@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps, Node } from "@xyflow/react";
 import type { ServiceNodeData } from "../types";
@@ -23,6 +23,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export const ServiceNode = memo(({ data }: NodeProps<ServiceNodeType>) => {
+  const [hovered, setHovered] = useState(false);
   const icon = ROLE_ICONS[data.role] ?? "📦";
   const statusColor = STATUS_COLORS[data.status ?? "unknown"];
   const podText =
@@ -40,7 +41,10 @@ export const ServiceNode = memo(({ data }: NodeProps<ServiceNodeType>) => {
         minWidth: 140,
         fontFamily: "'Inter', sans-serif",
         boxShadow: "0 2px 12px rgba(0,0,0,0.5)",
+        position: "relative",
       }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
@@ -71,8 +75,36 @@ export const ServiceNode = memo(({ data }: NodeProps<ServiceNodeType>) => {
         <div style={{ color: "#8b949e", fontSize: 10 }}>{podText}</div>
       )}
       {data.meta && (
-        <div style={{ color: "#00e5ff", fontSize: 10, marginTop: 2 }}>
+        <div style={{ color: "#8b949e", fontSize: 10, marginTop: 2 }}>
           {data.meta}
+        </div>
+      )}
+
+      {/* Hover tooltip for map names */}
+      {hovered && data.mapNames && data.mapNames.length > 0 && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 6px)",
+            left: 0,
+            background: "#1c2128",
+            border: "1px solid #30363d",
+            borderRadius: 6,
+            padding: "6px 10px",
+            zIndex: 1000,
+            minWidth: 180,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.6)",
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          <div style={{ color: "#8b949e", fontSize: 9, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Atomix Maps
+          </div>
+          {data.mapNames.map((name) => (
+            <div key={name} style={{ color: "#d2a8ff", fontSize: 10, lineHeight: 1.6 }}>
+              {name}
+            </div>
+          ))}
         </div>
       )}
     </div>
