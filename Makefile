@@ -34,8 +34,12 @@ setup:
 
 vendor:
 	@for mod in $(VENDOR_MODULES); do \
-		echo "==> Vendoring $$mod..."; \
-		cd $$mod && go mod vendor && cd ..; \
+		if [ -d "$$mod/vendor" ]; then \
+			echo "==> $$mod vendor already present — skipping."; \
+		else \
+			echo "==> Vendoring $$mod..."; \
+			(cd $$mod && go mod vendor); \
+		fi; \
 	done
 
 # ============================================================
@@ -60,14 +64,16 @@ deploy-atomix:
 	fi
 	kubectl apply -f atomix/storage-profile.yaml
 	kubectl apply -f atomix/store.yaml
-	@echo "==> Waiting for Atomix operator to create StatefulSet..."
 	@until kubectl get statefulset consensus-store >/dev/null 2>&1; do sleep 2; done
-	@echo "==> Patching StatefulSet (fix DO block storage permissions)..."
-	kubectl patch statefulset consensus-store --type='json' \
-		-p='[{"op":"add","path":"/spec/template/spec/initContainers","value":[{"name":"fix-permissions","image":"busybox","command":["sh","-c","chown -R 1000:1000 /var/lib/atomix"],"volumeMounts":[{"name":"data","mountPath":"/var/lib/atomix"}]}]}]'
-	@echo "==> Restarting pods on patched template..."
-	kubectl delete pod -l atomix.io/store=consensus-store --ignore-not-found=true
-	kubectl rollout status statefulset/consensus-store --timeout=300s
+	@if kubectl rollout status statefulset/consensus-store --timeout=10s >/dev/null 2>&1; then \
+		echo "consensus-store already healthy — skipping patch."; \
+	else \
+		echo "==> Patching StatefulSet (fix DO block storage permissions)..."; \
+		kubectl patch statefulset consensus-store --type='json' \
+			-p='[{"op":"add","path":"/spec/template/spec/initContainers","value":[{"name":"fix-permissions","image":"busybox","command":["sh","-c","chown -R 1000:1000 /var/lib/atomix"],"volumeMounts":[{"name":"data","mountPath":"/var/lib/atomix"}]}]}]'; \
+		kubectl delete pod -l atomix.io/store=consensus-store --ignore-not-found=true; \
+		kubectl rollout status statefulset/consensus-store --timeout=300s; \
+	fi
 
 deploy-kafka:
 ifndef KAFKA_EXTERNAL
@@ -76,20 +82,28 @@ ifndef KAFKA_EXTERNAL
 	else \
 		helm install strimzi-cluster-operator oci://quay.io/strimzi-helm/strimzi-kafka-operator; \
 	fi
-	kubectl apply -f kafka/kafka.yaml
-	kubectl wait kafka/ixp-kafka --for=condition=Ready --timeout=300s
+	@if kubectl get kafka ixp-kafka -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then \
+		echo "Kafka already ready — skipping."; \
+	else \
+		kubectl apply -f kafka/kafka.yaml; \
+		kubectl wait kafka/ixp-kafka --for=condition=Ready --timeout=300s; \
+	fi
 else
 	@echo "Skipping Strimzi — using external Kafka at $(KAFKA_BOOTSTRAP)"
 endif
 
 deploy-monitoring:
-	helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
-		--namespace monitoring --create-namespace \
-		-f monitoring/values.yaml
-	kubectl create configmap ixp-flows-dashboard \
-		--from-file=ixp-flows.json=monitoring/ixp-flows.json \
-		-n monitoring -o yaml --dry-run=client | kubectl apply -f -
-	kubectl label configmap ixp-flows-dashboard -n monitoring grafana_dashboard="1" --overwrite
+	@if helm status monitoring -n monitoring >/dev/null 2>&1; then \
+		echo "Monitoring already deployed — skipping."; \
+	else \
+		helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+			--namespace monitoring --create-namespace \
+			-f monitoring/values.yaml; \
+		kubectl create configmap ixp-flows-dashboard \
+			--from-file=ixp-flows.json=monitoring/ixp-flows.json \
+			-n monitoring -o yaml --dry-run=client | kubectl apply -f -; \
+		kubectl label configmap ixp-flows-dashboard -n monitoring grafana_dashboard="1" --overwrite; \
+	fi
 
 infra: deploy-atomix deploy-monitoring
 	$(MAKE) deploy-kafka $(if $(KAFKA_EXTERNAL),KAFKA_EXTERNAL=$(KAFKA_EXTERNAL),) KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
@@ -104,34 +118,46 @@ infra: deploy-atomix deploy-monitoring
 
 deploy-api:
 	@echo "==> Deploying API Gateway..."
-	$(if $(DOCKER_REGISTRY),\
-		docker build --platform linux/amd64 -t $(call image_ref,api-gateway) ./api && docker push $(call image_ref,api-gateway),\
-		eval $$(minikube docker-env) && docker build -t api-gateway:local ./api)
-	kubectl apply -f api/ingress.yaml -f api/deployment.yaml
-	kubectl set image deployment/api-gateway api-gateway=$(call image_ref,api-gateway)
-	kubectl apply -f api/service-monitor.yaml
+	@if kubectl get deployment api-gateway -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null | grep -qF "$(call image_ref,api-gateway)"; then \
+		echo "api-gateway already running $(call image_ref,api-gateway) — skipping."; \
+	else \
+		$(if $(DOCKER_REGISTRY),\
+			docker build --platform linux/amd64 -t $(call image_ref,api-gateway) ./api && docker push $(call image_ref,api-gateway),\
+			eval $$(minikube docker-env) && docker build -t api-gateway:local ./api); \
+		kubectl apply -f api/ingress.yaml -f api/deployment.yaml; \
+		kubectl set image deployment/api-gateway api-gateway=$(call image_ref,api-gateway); \
+		kubectl apply -f api/service-monitor.yaml; \
+	fi
 
 deploy-auction:
 	@echo "==> Deploying Auction Runner..."
-	$(if $(DOCKER_REGISTRY),\
-		docker build --platform linux/amd64 -t $(call image_ref,auction-runner) ./auction && docker push $(call image_ref,auction-runner),\
-		eval $$(minikube docker-env) && docker build -t auction-runner:local ./auction)
-	kubectl apply -f auction/deployment.yaml
-	kubectl set image deployment/auction-runner auction-runner=$(call image_ref,auction-runner)
-	kubectl set env deployment/auction-runner KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
-	@[ -z "$(KAFKA_TLS_CA_FILE)" ] || kubectl set env deployment/auction-runner \
-		KAFKA_TLS_CA_FILE=$(KAFKA_TLS_CA_FILE) KAFKA_TLS_CERT_FILE=$(KAFKA_TLS_CERT_FILE) KAFKA_TLS_KEY_FILE=$(KAFKA_TLS_KEY_FILE)
+	@if kubectl get deployment auction-runner -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null | grep -qF "$(call image_ref,auction-runner)"; then \
+		echo "auction-runner already running $(call image_ref,auction-runner) — skipping."; \
+	else \
+		$(if $(DOCKER_REGISTRY),\
+			docker build --platform linux/amd64 -t $(call image_ref,auction-runner) ./auction && docker push $(call image_ref,auction-runner),\
+			eval $$(minikube docker-env) && docker build -t auction-runner:local ./auction); \
+		kubectl apply -f auction/deployment.yaml; \
+		kubectl set image deployment/auction-runner auction-runner=$(call image_ref,auction-runner); \
+		kubectl set env deployment/auction-runner KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP); \
+		$(if $(KAFKA_TLS_CA_FILE),kubectl set env deployment/auction-runner \
+			KAFKA_TLS_CA_FILE=$(KAFKA_TLS_CA_FILE) KAFKA_TLS_CERT_FILE=$(KAFKA_TLS_CERT_FILE) KAFKA_TLS_KEY_FILE=$(KAFKA_TLS_KEY_FILE),true); \
+	fi
 
 deploy-telemetry:
 	@echo "==> Deploying Telemetry Processor..."
-	$(if $(DOCKER_REGISTRY),\
-		docker build --platform linux/amd64 -t $(call image_ref,telemetry-service) ./telemetry && docker push $(call image_ref,telemetry-service),\
-		eval $$(minikube docker-env) && docker build -t telemetry-service:local ./telemetry)
-	kubectl apply -f telemetry/deployment.yaml
-	kubectl set image deployment/telemetry-service telemetry-service=$(call image_ref,telemetry-service)
-	kubectl set env deployment/telemetry-service KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
-	@[ -z "$(KAFKA_TLS_CA_FILE)" ] || kubectl set env deployment/telemetry-service \
-		KAFKA_TLS_CA_FILE=$(KAFKA_TLS_CA_FILE) KAFKA_TLS_CERT_FILE=$(KAFKA_TLS_CERT_FILE) KAFKA_TLS_KEY_FILE=$(KAFKA_TLS_KEY_FILE)
+	@if kubectl get deployment telemetry-service -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null | grep -qF "$(call image_ref,telemetry-service)"; then \
+		echo "telemetry-service already running $(call image_ref,telemetry-service) — skipping."; \
+	else \
+		$(if $(DOCKER_REGISTRY),\
+			docker build --platform linux/amd64 -t $(call image_ref,telemetry-service) ./telemetry && docker push $(call image_ref,telemetry-service),\
+			eval $$(minikube docker-env) && docker build -t telemetry-service:local ./telemetry); \
+		kubectl apply -f telemetry/deployment.yaml; \
+		kubectl set image deployment/telemetry-service telemetry-service=$(call image_ref,telemetry-service); \
+		kubectl set env deployment/telemetry-service KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP); \
+		$(if $(KAFKA_TLS_CA_FILE),kubectl set env deployment/telemetry-service \
+			KAFKA_TLS_CA_FILE=$(KAFKA_TLS_CA_FILE) KAFKA_TLS_CERT_FILE=$(KAFKA_TLS_CERT_FILE) KAFKA_TLS_KEY_FILE=$(KAFKA_TLS_KEY_FILE),true); \
+	fi
 
 deploy-dummy:
 	@echo "==> Deploying Dummy Producer..."
