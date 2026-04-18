@@ -25,20 +25,13 @@ This guide covers deploying the IXP control plane on a managed DOKS cluster. The
    doctl auth init           # paste your DO API token
    ```
 
-2. **DOKS cluster** (3 × `s-4vcpu-8gb` nodes):
-
-   ```bash
-   doctl kubernetes cluster create ixp-cluster \
-     --region sgp1 \
-     --node-pool "name=default;size=s-4vcpu-8gb;count=3" \
-     --wait
-   ```
+2. **DOKS cluster** — create one from the [DigitalOcean dashboard](https://cloud.digitalocean.com/kubernetes/clusters) if you haven't already (recommended: 3 × `s-4vcpu-8gb` nodes, `sgp1` region).
 
 3. **kubeconfig** switched to the new cluster:
 
    ```bash
-   doctl kubernetes cluster kubeconfig save ixp-cluster
-   kubectl get nodes   # verify 3 nodes Ready
+   doctl kubernetes cluster kubeconfig save 9b3f3230-9626-467e-a9da-b1eb8b20a2c5
+   kubectl get nodes   # verify nodes are Ready
    ```
 
 4. **DOCR** created, integrated with the cluster, and Docker authenticated:

@@ -23,6 +23,7 @@ import type {
 } from "./types";
 import { normalizeScenario } from "./normalizeScenario";
 
+const BASE = import.meta.env.BASE_URL;
 const MAX_FEED = 120;
 const MAX_CHART_POINTS = 60;
 
@@ -49,7 +50,7 @@ export default function App() {
 
   // Load scenario + initial data.
   useEffect(() => {
-    fetch("/admin/scenario")
+    fetch(`${BASE}admin/scenario`)
       .then(async (r) => {
         if (!r.ok) {
           const body = await r.text();
@@ -72,7 +73,7 @@ export default function App() {
   // Poll health endpoint every 10 s.
   useEffect(() => {
     function poll() {
-      fetch("/admin/health")
+      fetch(`${BASE}admin/health`)
         .then((r) => r.json())
         .then((h: { atomix: boolean; kafka: boolean }) => {
           setAtomixHealthy(h.atomix);
@@ -88,7 +89,7 @@ export default function App() {
   }, []);
 
   function refreshCredits() {
-    fetch("/admin/credits")
+    fetch(`${BASE}admin/credits`)
       .then(async (r) => {
         if (!r.ok) return null;
         return r.json() as Promise<{

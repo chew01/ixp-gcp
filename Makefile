@@ -60,10 +60,14 @@ deploy-atomix:
 	fi
 	kubectl apply -f atomix/storage-profile.yaml
 	kubectl apply -f atomix/store.yaml
-	@echo "==> Patching StatefulSet (fix fsGroup for DO block storage)..."
-	kubectl rollout status statefulset/consensus-store --timeout=30s || true
+	@echo "==> Waiting for Atomix operator to create StatefulSet..."
+	@until kubectl get statefulset consensus-store >/dev/null 2>&1; do sleep 2; done
+	@echo "==> Patching StatefulSet (fix DO block storage permissions)..."
 	kubectl patch statefulset consensus-store --type='json' \
 		-p='[{"op":"add","path":"/spec/template/spec/initContainers","value":[{"name":"fix-permissions","image":"busybox","command":["sh","-c","chown -R 1000:1000 /var/lib/atomix"],"volumeMounts":[{"name":"data","mountPath":"/var/lib/atomix"}]}]}]'
+	@echo "==> Restarting pods on patched template..."
+	kubectl delete pod -l atomix.io/store=consensus-store --ignore-not-found=true
+	kubectl rollout status statefulset/consensus-store --timeout=300s
 
 deploy-kafka:
 ifndef KAFKA_EXTERNAL
@@ -231,7 +235,7 @@ deploy-dashboard:
 	@echo "==> Deploying Dashboard..."
 	cd dashboard && go mod vendor
 	$(if $(DOCKER_REGISTRY),\
-		docker build --platform linux/amd64 -t $(call image_ref,dashboard) ./dashboard && docker push $(call image_ref,dashboard),\
+		docker build --platform linux/amd64 --build-arg VITE_BASE_PATH=/dashboard/ -t $(call image_ref,dashboard) ./dashboard && docker push $(call image_ref,dashboard),\
 		eval $$(minikube docker-env) && docker build -t dashboard:local ./dashboard)
 	kubectl apply -f dashboard/rbac.yaml
 	kubectl apply -f dashboard/deployment.yaml

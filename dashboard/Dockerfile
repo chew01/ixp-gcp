@@ -1,5 +1,7 @@
 # ===== STAGE 1: Build frontend =====
 FROM node:22-alpine AS frontend
+ARG VITE_BASE_PATH=/
+ENV VITE_BASE_PATH=$VITE_BASE_PATH
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/bun.lock* ./
 RUN npm install
