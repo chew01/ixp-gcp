@@ -3,10 +3,18 @@
 //
 // Usage:
 //
-//	go run ./scripts/gen-agent-deployments /etc/scenario/scenario.yaml | kubectl apply -f -
+//	go run ./scripts/gen-agent-deployments <scenario.yaml> [--image <image-ref>]
+//
+// The optional --image flag overrides the container image used in every generated
+// Deployment. Defaults to "customer-agent:local" (Minikube local image).
+// For cloud deployments pass the full registry reference, e.g.:
+//
+//	go run ./scripts/gen-agent-deployments scenario.yaml \
+//	  --image registry.digitalocean.com/my-registry/customer-agent:v1.0.0
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 
@@ -32,7 +40,7 @@ spec:
     spec:
       containers:
       - name: customer-agent
-        image: customer-agent:local
+        image: %s
         env:
           - name: CUSTOMER_ID
             value: "%s"
@@ -51,12 +59,20 @@ spec:
 `
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "usage: gen-agent-deployments <scenario.yaml>\n")
+	imageFlag := flag.String("image", "customer-agent:local", "container image reference for the customer-agent")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "usage: gen-agent-deployments <scenario.yaml> [--image <image-ref>]\n")
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+
+	args := flag.Args()
+	if len(args) < 1 {
+		flag.Usage()
 		os.Exit(1)
 	}
 
-	path := os.Args[1]
+	path := args[0]
 	scene, err := scenario.Load(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error loading scenario: %v\n", err)
@@ -70,6 +86,6 @@ func main() {
 			continue
 		}
 		seen[c.ID] = true
-		fmt.Printf(deploymentTemplate, c.ID, c.ID, c.ID, c.ID)
+		fmt.Printf(deploymentTemplate, c.ID, c.ID, c.ID, *imageFlag, c.ID)
 	}
 }

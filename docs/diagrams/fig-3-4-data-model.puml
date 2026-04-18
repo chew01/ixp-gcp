@@ -1,0 +1,84 @@
+@startuml fig-3-4-data-model
+title Figure 3.4 — Atomix Data Model and Access Patterns
+
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam ArrowColor #333333
+skinparam ArrowThickness 1.5
+skinparam linetype ortho
+
+skinparam component {
+    BackgroundColor #DDEEFF
+    BorderColor #336699
+    FontColor #222222
+}
+skinparam database {
+    BackgroundColor #EEF5DD
+    BorderColor #557700
+    FontColor #222222
+}
+skinparam rectangle {
+    BackgroundColor #F8F8F8
+    BorderColor #AAAAAA
+}
+skinparam note {
+    BackgroundColor #FFFFF0
+    BorderColor #CCCC77
+}
+
+' ─── Control-plane components ─────────────────────────────────────
+component "Telemetry\nProcessor" as TP
+component "API\nGateway" as GW
+component "Auction\nRunner" as AR
+
+' ─── Atomix maps ──────────────────────────────────────────────────
+rectangle "Atomix  (Raft consensus)" {
+
+    database "**throughput-map**\n---\nKey: switchID|ingressPort|egressPort\nValue: throughput_kbps, drop_kbps,\n       egress_kbps, drop_rate_pct" as TMAP
+
+    database "**bids-<egressPort>**\n---\nKey: ingressPort\nValue: units | unit_price | customerID\n[one map per egress port]" as BMAP
+
+    database "**credits-map**\n---\nKey: customerID\nValue: total_spent, starting_balance\n\nBalance = starting_balance - total_spent" as CMAP
+
+    database "**utility-map**\n---\nKey: customerID\nValue: cumulative_utility  (int64)" as UMAP
+
+    database "**auction-history**\n---\nKey: intervalID|egressPort\nValue: clearing_price, allocated_units,\n       customer_id" as HMAP
+
+}
+
+' ─── throughput-map access ────────────────────────────────────────
+TP  -right-> TMAP : writes\n(each telemetry record)
+GW  <-right- TMAP : reads on\nGET /flows
+
+' ─── bids map access ──────────────────────────────────────────────
+GW  -right-> BMAP : writes bid\n(POST /bids)
+AR  <-right- BMAP : reads all bids\n(per auction round)
+
+' ─── credits-map access ───────────────────────────────────────────
+AR  -right-> CMAP : debits winners
+GW  <-right- CMAP : reads balance\n(GET /credits)
+
+' ─── utility-map access ───────────────────────────────────────────
+AR  -right-> UMAP : updates utility
+GW  <-right- UMAP : reads for\n/metrics scrape
+
+' ─── auction-history access ───────────────────────────────────────
+AR  -right-> HMAP : records outcome
+GW  <-right- HMAP : reads history\n(GET /auctions)
+
+' ─── Notes ────────────────────────────────────────────────────────
+note bottom of BMAP
+  Cleared by Auction Runner after
+  every round — no bid carry-over.
+  Last-write-wins on same key
+  enforces one bid per ingress port.
+end note
+
+note bottom of CMAP
+  No hard budget enforcement at
+  bid-submission time (known
+  limitation — see §6.3).
+end note
+
+@enduml

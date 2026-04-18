@@ -1,0 +1,55 @@
+kubectl logs deployment/auction-runner \
+	  | grep -E '\[(bids-collected|cleared|published-to-kafka)\]'
+2026/04/08 05:56:06 [bids-collected] port=0 bids=10 t=2026-04-08T05:56:06.095186192Z
+2026/04/08 05:56:06 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 05:56:16 [published-to-kafka] port=0 elapsed_ms=10048
+2026/04/08 05:57:06 [bids-collected] port=0 bids=10 t=2026-04-08T05:57:06.041605154Z
+2026/04/08 05:57:06 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 05:57:16 [published-to-kafka] port=0 elapsed_ms=10057
+2026/04/08 05:58:06 [bids-collected] port=0 bids=10 t=2026-04-08T05:58:06.037218306Z
+2026/04/08 05:58:06 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 05:58:16 [published-to-kafka] port=0 elapsed_ms=10075
+2026/04/08 05:59:06 [bids-collected] port=0 bids=10 t=2026-04-08T05:59:06.032820382Z
+2026/04/08 05:59:06 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 05:59:16 [published-to-kafka] port=0 elapsed_ms=10035
+2026/04/08 06:00:06 [bids-collected] port=0 bids=10 t=2026-04-08T06:00:06.043166349Z
+2026/04/08 06:00:06 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 06:00:16 [published-to-kafka] port=0 elapsed_ms=10081
+2026/04/08 06:01:06 [bids-collected] port=0 bids=10 t=2026-04-08T06:01:06.033036954Z
+2026/04/08 06:01:06 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 06:01:16 [published-to-kafka] port=0 elapsed_ms=10038
+2026/04/08 06:02:06 [bids-collected] port=0 bids=10 t=2026-04-08T06:02:06.034557717Z
+2026/04/08 06:02:06 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 06:02:16 [published-to-kafka] port=0 elapsed_ms=10052
+2026/04/08 06:03:06 [bids-collected] port=0 bids=10 t=2026-04-08T06:03:06.034333495Z
+2026/04/08 06:03:06 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 06:03:16 [published-to-kafka] port=0 elapsed_ms=10062
+2026/04/08 06:04:06 [bids-collected] port=0 bids=10 t=2026-04-08T06:04:06.034488595Z
+2026/04/08 06:04:06 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 06:04:16 [published-to-kafka] port=0 elapsed_ms=10057
+2026/04/08 06:05:06 [bids-collected] port=0 bids=10 t=2026-04-08T06:05:06.052037113Z
+2026/04/08 06:05:06 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 06:05:16 [published-to-kafka] port=0 elapsed_ms=10088
+2026/04/08 06:06:06 [bids-collected] port=0 bids=10 t=2026-04-08T06:06:06.034127599Z
+2026/04/08 06:06:06 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 06:06:16 [published-to-kafka] port=0 elapsed_ms=10061
+2026/04/08 06:07:06 [bids-collected] port=0 bids=10 t=2026-04-08T06:07:06.036971405Z
+2026/04/08 06:07:06 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 06:07:16 [published-to-kafka] port=0 elapsed_ms=10061
+2026/04/08 06:08:06 [bids-collected] port=0 bids=10 t=2026-04-08T06:08:06.033620036Z
+2026/04/08 06:08:06 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 06:08:16 [published-to-kafka] port=0 elapsed_ms=10052
+2026/04/08 06:09:06 [bids-collected] port=0 bids=10 t=2026-04-08T06:09:06.034307742Z
+2026/04/08 06:09:06 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 06:09:16 [published-to-kafka] port=0 elapsed_ms=10105
+2026/04/08 06:10:06 [bids-collected] port=0 bids=10 t=2026-04-08T06:10:06.07342635Z
+2026/04/08 06:10:06 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 06:10:16 [published-to-kafka] port=0 elapsed_ms=10097
+2026/04/08 06:11:06 [bids-collected] port=0 bids=10 t=2026-04-08T06:11:06.038255382Z
+2026/04/08 06:11:06 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 06:11:16 [published-to-kafka] port=0 elapsed_ms=10071
+2026/04/08 06:12:06 [bids-collected] port=0 bids=10 t=2026-04-08T06:12:06.035096844Z
+2026/04/08 06:12:06 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 06:12:16 [published-to-kafka] port=0 elapsed_ms=10070
+2026/04/08 06:13:06 [bids-collected] port=0 bids=10 t=2026-04-08T06:13:06.03512969Z
+2026/04/08 06:13:06 [cleared] port=0 clearing_price=500 elapsed_ms=0

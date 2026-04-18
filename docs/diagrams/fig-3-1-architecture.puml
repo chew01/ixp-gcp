@@ -1,0 +1,97 @@
+@startuml fig-3-1-architecture
+title Figure 3.1 — Control Plane Architecture
+
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam ArrowColor #333333
+skinparam ArrowThickness 1.5
+
+skinparam component {
+    BackgroundColor #DDEEFF
+    BorderColor #336699
+    FontColor #222222
+    BorderThickness 1.5
+}
+skinparam database {
+    BackgroundColor #EEF5DD
+    BorderColor #557700
+}
+skinparam queue {
+    BackgroundColor #FFF3CC
+    BorderColor #AA7700
+}
+skinparam rectangle {
+    BackgroundColor #F8F8F8
+    BorderColor #999999
+    BorderStyle dashed
+}
+skinparam actor {
+    BackgroundColor #FFFFFF
+    BorderColor #555555
+}
+skinparam node {
+    BackgroundColor #F0F0F0
+    BorderColor #888888
+}
+
+' ─── External actors ──────────────────────────────────────────────
+actor "Local Switch\nController" as SWITCH
+actor "Enforcement\nLayer" as ENF #FFFFFF
+
+' ─── Kubernetes cluster boundary ──────────────────────────────────
+rectangle "Kubernetes Cluster" as K8S {
+
+    ' ── Core control-plane components ──────────────────────────
+    component "API Server\n**:8080** (REST)  **:9090** (metrics)" as GW
+    component "Telemetry\nProcessor" as TP
+    component "Auction\nRunner" as AR
+    component "Customer\nAgent pods" as CA
+
+    ' ── Atomix distributed store ────────────────────────────────
+    database "Atomix\n(distributed state)" as ATOMIX
+
+    ' ── Kafka message bus ───────────────────────────────────────
+    queue "Kafka" as KAFKA {
+        collections "switch-telemetry" as KST
+        collections "auction-results" as KAR
+    }
+
+    ' ── Monitoring stack ────────────────────────────────────────
+    component "Prometheus\n+ Grafana" as PROM
+
+}
+
+' ─── Data-flow edges ──────────────────────────────────────────────
+
+' Switch → Kafka → Telemetry Processor → Atomix
+SWITCH  -right-> KST    : publishes\ntelemetry records
+KST     -right-> TP     : consumes
+TP      -right-> ATOMIX : writes flow metrics
+
+' API Server ↔ Customer Agents
+CA      <-up->   GW     : REST\n(bids / flows / credits / auctions)
+
+' API Server reads/writes Atomix
+GW      <-->     ATOMIX : reads / writes
+
+' Auction Runner reads bids, writes results
+AR      <-->     ATOMIX : reads bids,\nwrites results
+AR      -right-> KAR    : publishes\nauction results
+
+' Prometheus scrapes
+PROM    <-left-  GW   : scrapes /metrics
+
+' Downstream (out of scope)
+KAR     -right-> ENF  : downstream\n(out of scope)
+
+' ─── Notes ────────────────────────────────────────────────────────
+note bottom of KAR
+  Scope boundary:
+  this project **produces** to
+  auction-results; downstream
+  enforcement is handled by the
+  local switch controller.
+end note
+
+@enduml

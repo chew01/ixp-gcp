@@ -1,16 +1,17 @@
 version: v1
 name: experiment-5-convergence
 
-# Experiment 5 — Auction Convergence and Stability
+# Experiment 5 — Auction Convergence and Stability (Section 5.3.2)
 #
 # Steady load at 11 kbps/flow (110 kbps total, 10% over the 100 kbps capacity).
-# Both conservative agents shadow each other's clearing price signal.
+# Both valuation_based agents bid their true valuation (dominant strategy).
 #
-# Expected: clearing price converges to competitive equilibrium within 3-5
-# intervals and stays within ±10% of its mean for the remaining rounds.
-# Steady-state variance is low because both agents use the same update rule.
+# Expected: clearing price converges to a fixed point within 3-5 intervals
+# and stays within ±10% of its mean for the remaining rounds. Because both
+# agents bid their true valuation rather than tracking the clearing price,
+# the auction reaches a stable equilibrium faster than conservative agents.
 #
-# Measure:
+# Measure (Section 5.3.2):
 #   - Convergence point N: first interval after which price stays within ±10% of mean
 #   - Steady-state std deviation in intervals N..30
 #   - Speed: number of intervals to reach steady state
@@ -39,11 +40,11 @@ customers:
   - id: as12345
     switch_id: sw-1
     ingress_ports: [1, 2, 3, 4, 5]
-    strategy: conservative
+    strategy: valuation_based
     valuation_per_unit: 500
 
   - id: as67890
     switch_id: sw-1
     ingress_ports: [6, 7, 8, 9, 10]
-    strategy: conservative
+    strategy: valuation_based
     valuation_per_unit: 500

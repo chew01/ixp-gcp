@@ -1,0 +1,68 @@
+version: v1
+name: experiment-perf-5bidders
+
+# Performance Experiment — Auction Pipeline Latency (5 bidders, Section 5.2.2)
+#
+# Five customers, each owning 2 ingress ports, running conservative strategy
+# against steady 9 kbps/flow traffic (9 × 10 flows = 90 kbps, 90% of capacity).
+# The capacity constraint means all 5 customers compete for the shared egress port
+# each round, exercising the full bid-collection → clear → publish path with 5 bids.
+#
+# This scenario is used exclusively to measure auction pipeline latency.
+# After ≥30 intervals run:
+#   make measure-pipeline-latency
+# and collect [bids-collected], [cleared], [published-to-kafka] log lines.
+#
+# The 2-bidder baseline for the same measurement is experiment-1-baseline.yaml.
+# The 10-bidder variant is experiment-perf-10bidders.yaml.
+#
+# Run duration: 30 auction intervals = 15 minutes
+# Export: make measure-pipeline-latency  (greps auction-runner logs)
+
+auction_result_kafka_topic: auction-results
+telemetry_kafka_topic: switch-telemetry
+
+reservation_price: 50
+auction_interval: 30s
+telemetry_interval: 1s
+
+switches:
+  - id: sw-1
+    ingress_ports: [1,2,3,4,5,6,7,8,9,10]
+    egress_ports: [0]
+    max_capacity: 100
+
+traffic:
+  pattern: steady
+  rate_kbps: 9
+
+customers:
+  - id: as10001
+    switch_id: sw-1
+    ingress_ports: [1, 2]
+    strategy: conservative
+    valuation_per_unit: 500
+
+  - id: as10002
+    switch_id: sw-1
+    ingress_ports: [3, 4]
+    strategy: conservative
+    valuation_per_unit: 500
+
+  - id: as10003
+    switch_id: sw-1
+    ingress_ports: [5, 6]
+    strategy: conservative
+    valuation_per_unit: 500
+
+  - id: as10004
+    switch_id: sw-1
+    ingress_ports: [7, 8]
+    strategy: conservative
+    valuation_per_unit: 500
+
+  - id: as10005
+    switch_id: sw-1
+    ingress_ports: [9, 10]
+    strategy: conservative
+    valuation_per_unit: 500

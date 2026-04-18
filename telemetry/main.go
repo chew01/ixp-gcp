@@ -29,14 +29,9 @@ func main() {
 		log.Fatalf("Kafka TLS config: %v", err)
 	}
 
-	ctx := context.Background()
-
-	consumer, err := NewConsumer(ctx, kafkaBootstrap, scene.TelemetryKafkaTopic, kafkaDialer(tlsCfg))
-	if err != nil {
-		log.Fatalf("Failed to create consumer: %v", err)
-	}
+	consumer := NewConsumer(kafkaBootstrap, scene.TelemetryKafkaTopic, kafkaDialer(tlsCfg))
 	defer consumer.Close()
 
 	log.Println("Telemetry service started, consuming from", scene.TelemetryKafkaTopic)
-	consumer.Run(ctx)
+	consumer.Run(context.Background())
 }

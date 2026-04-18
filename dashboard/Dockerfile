@@ -8,7 +8,6 @@ RUN npm run build
 
 # ===== STAGE 2: Build Go binary =====
 FROM golang:1.25-alpine AS builder
-RUN apk add --no-cache git bash
 WORKDIR /app
 COPY go.mod go.sum ./
 COPY vendor ./vendor

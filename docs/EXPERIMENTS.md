@@ -19,11 +19,35 @@ This command:
 1. Deploys the core control plane (if not already running).
 2. Loads the experiment's scenario YAML into the `test-scenario` ConfigMap.
 3. Deploys the dummy traffic producer.
-4. Restarts auction runner, telemetry, and API gateway with the new scenario.
+4. Restarts auction runner, telemetry, and API server with the new scenario.
 5. Removes any old agent pods (`kubectl delete deployment -l app=customer-agent`).
 6. Generates and applies one agent Deployment per customer defined in the scenario.
 
 **Switching experiments:** run `make all experiment=<new-id>` again. Old agents are removed and new ones start.
+
+---
+
+## Experiment Reference
+
+| ID | Scenario file | Strategies | What to observe |
+|----|--------------|------------|-----------------|
+| `1` | `experiment-1-baseline.yaml` | conservative × 2 | Drops fall to ~0 after 1–2 intervals; stable clearing price |
+| `2a` | `experiment-2a-conservative-spike.yaml` | conservative × 2 | Drops persist ~23% after spike; neither agent adapts |
+| `2b` | `experiment-2b-demand-corrected-spike.yaml` | conservative vs demand_corrected | `as67890` wins more allocation post-spike; allocation diverges |
+| `3` | `experiment-3-heterogeneous.yaml` | conservative vs price_insensitive | `as67890` wins full allocation; `as12345` absorbs all drops |
+| `4a` | `experiment-4a-conservative-budget.yaml` | conservative × 2 (finite budget) | Abrupt credit exhaustion cliff |
+| `4b` | `experiment-4b-budget-aware.yaml` | budget_aware × 2 (finite budget) | Gradual degradation; credits stretch longer |
+| `4c` | `experiment-4c-throughput-optimizer.yaml` | conservative vs throughput_optimizer | Optimizer adapts to spike; utility gap widens |
+| `5` | `experiment-5-convergence.yaml` | valuation_based × 2 | Clearing price and allocation stabilise within a few intervals |
+| `6a` | `experiment-6a-interval-10s.yaml` | demand_corrected × 2 | Fast reaction (10s); higher credit expenditure |
+| `6b` | `experiment-6b-interval-30s.yaml` | demand_corrected × 2 | Baseline 30s interval |
+| `6c` | `experiment-6c-interval-60s.yaml` | demand_corrected × 2 | Slow reaction; sustained drops between rounds |
+| `7` | `experiment-7-valuation-dominant-strategy.yaml` | conservative vs valuation_based | Conservative loses allocation when clearing price spikes; utility gap validates dominant strategy theorem |
+| `7b` | `experiment-7b-qlearning-convergence.yaml` | q_learning vs valuation_based | Q-learner's utility trends toward valuation_based baseline over 50+ intervals |
+| `8` | `experiment-8-mixed-valuations.yaml` | valuation_based (250) vs valuation_based (1000) | High-value agent wins majority of allocation; clearing price ~250 |
+| `9` | `experiment-9-ema-negative-result.yaml` | exploratory vs valuation_based | EMA lags clearing-price spike; valuation_based wins allocation that exploratory misses |
+
+> Reset Atomix state between experiments that track credits (4a, 4b) to avoid carry-over. See **Resetting State** below.
 
 ---
 

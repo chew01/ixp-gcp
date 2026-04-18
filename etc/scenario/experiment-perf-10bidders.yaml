@@ -1,0 +1,100 @@
+version: v1
+name: experiment-perf-10bidders
+
+# Performance Experiment — Auction Pipeline Latency (10 bidders, Section 5.2.2)
+#
+# Ten customers, each owning 1 ingress port, running conservative strategy
+# against steady 9 kbps/flow traffic (9 × 10 flows = 90 kbps, 90% of capacity).
+# All 10 customers compete for the shared egress port each round, maximising
+# the bid-set size for pipeline latency measurement.
+#
+# This scenario is the upper bound in the bidder-count sweep:
+#   2 bidders → experiment-1-baseline.yaml
+#   5 bidders → experiment-perf-5bidders.yaml
+#  10 bidders → this file
+#
+# After ≥30 intervals run:
+#   make measure-pipeline-latency
+# and collect [bids-collected], [cleared], [published-to-kafka] log lines.
+# Report mean and variance of elapsed_ms across rounds for each bidder count.
+#
+# Run duration: 30 auction intervals = 15 minutes
+# Export: make measure-pipeline-latency  (greps auction-runner logs)
+
+auction_result_kafka_topic: auction-results
+telemetry_kafka_topic: switch-telemetry
+
+reservation_price: 50
+auction_interval: 30s
+telemetry_interval: 1s
+
+switches:
+  - id: sw-1
+    ingress_ports: [1,2,3,4,5,6,7,8,9,10]
+    egress_ports: [0]
+    max_capacity: 100
+
+traffic:
+  pattern: steady
+  rate_kbps: 9
+
+customers:
+  - id: as20001
+    switch_id: sw-1
+    ingress_ports: [1]
+    strategy: conservative
+    valuation_per_unit: 500
+
+  - id: as20002
+    switch_id: sw-1
+    ingress_ports: [2]
+    strategy: conservative
+    valuation_per_unit: 500
+
+  - id: as20003
+    switch_id: sw-1
+    ingress_ports: [3]
+    strategy: conservative
+    valuation_per_unit: 500
+
+  - id: as20004
+    switch_id: sw-1
+    ingress_ports: [4]
+    strategy: conservative
+    valuation_per_unit: 500
+
+  - id: as20005
+    switch_id: sw-1
+    ingress_ports: [5]
+    strategy: conservative
+    valuation_per_unit: 500
+
+  - id: as20006
+    switch_id: sw-1
+    ingress_ports: [6]
+    strategy: conservative
+    valuation_per_unit: 500
+
+  - id: as20007
+    switch_id: sw-1
+    ingress_ports: [7]
+    strategy: conservative
+    valuation_per_unit: 500
+
+  - id: as20008
+    switch_id: sw-1
+    ingress_ports: [8]
+    strategy: conservative
+    valuation_per_unit: 500
+
+  - id: as20009
+    switch_id: sw-1
+    ingress_ports: [9]
+    strategy: conservative
+    valuation_per_unit: 500
+
+  - id: as20010
+    switch_id: sw-1
+    ingress_ports: [10]
+    strategy: conservative
+    valuation_per_unit: 500

@@ -5,6 +5,10 @@ metadata:
 spec:
   replicas: 3
   groups: 3
+  securityContext:
+    fsGroup: 2000
+    runAsUser: 1000
+    runAsGroup: 1000
   volumeClaimTemplate:
     spec:
       accessModes:
@@ -13,4 +17,4 @@ spec:
       resources:
         requests:
           storage: 8Gi
-      storageClassName: standard
+      storageClassName: do-block-storage

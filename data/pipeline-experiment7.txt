@@ -1,0 +1,33 @@
+kubectl logs deployment/auction-runner \
+	  | grep -E '\[(bids-collected|cleared|published-to-kafka)\]'
+Defaulted container "auction-runner" out of: auction-runner, atomix-proxy
+2026/04/08 08:23:49 [bids-collected] port=0 bids=10 t=2026-04-08T08:23:49.331474378Z
+2026/04/08 08:23:49 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 08:23:57 [published-to-kafka] port=0 elapsed_ms=8045
+2026/04/08 08:24:19 [bids-collected] port=0 bids=4 t=2026-04-08T08:24:19.304598619Z
+2026/04/08 08:24:19 [cleared] port=0 clearing_price=50 elapsed_ms=0
+2026/04/08 08:24:23 [published-to-kafka] port=0 elapsed_ms=4003
+2026/04/08 08:24:49 [bids-collected] port=0 bids=10 t=2026-04-08T08:24:49.306179224Z
+2026/04/08 08:24:49 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 08:24:59 [published-to-kafka] port=0 elapsed_ms=10005
+2026/04/08 08:25:19 [bids-collected] port=0 bids=2 t=2026-04-08T08:25:19.303123764Z
+2026/04/08 08:25:19 [cleared] port=0 clearing_price=50 elapsed_ms=0
+2026/04/08 08:25:21 [published-to-kafka] port=0 elapsed_ms=2002
+2026/04/08 08:25:49 [bids-collected] port=0 bids=10 t=2026-04-08T08:25:49.302827923Z
+2026/04/08 08:25:49 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 08:25:59 [published-to-kafka] port=0 elapsed_ms=10007
+2026/04/08 08:26:49 [bids-collected] port=0 bids=10 t=2026-04-08T08:26:49.307912001Z
+2026/04/08 08:26:49 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 08:26:59 [published-to-kafka] port=0 elapsed_ms=10038
+2026/04/08 08:27:19 [bids-collected] port=0 bids=2 t=2026-04-08T08:27:19.301286056Z
+2026/04/08 08:27:19 [cleared] port=0 clearing_price=50 elapsed_ms=0
+2026/04/08 08:27:21 [published-to-kafka] port=0 elapsed_ms=2001
+2026/04/08 08:27:49 [bids-collected] port=0 bids=10 t=2026-04-08T08:27:49.304499511Z
+2026/04/08 08:27:49 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 08:27:58 [published-to-kafka] port=0 elapsed_ms=9005
+2026/04/08 08:28:19 [bids-collected] port=0 bids=4 t=2026-04-08T08:28:19.306796579Z
+2026/04/08 08:28:19 [cleared] port=0 clearing_price=50 elapsed_ms=0
+2026/04/08 08:28:23 [published-to-kafka] port=0 elapsed_ms=4003
+2026/04/08 08:28:49 [bids-collected] port=0 bids=10 t=2026-04-08T08:28:49.306805194Z
+2026/04/08 08:28:49 [cleared] port=0 clearing_price=500 elapsed_ms=0
+2026/04/08 08:28:58 [published-to-kafka] port=0 elapsed_ms=9005

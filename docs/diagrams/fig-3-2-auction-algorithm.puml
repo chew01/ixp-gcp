@@ -1,0 +1,76 @@
+@startuml fig-3-2-auction-algorithm
+title Figure 3.2 — Uniform-Price Auction Clearing Algorithm
+
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam ArrowColor #333333
+skinparam ArrowThickness 1.5
+
+skinparam activity {
+    BackgroundColor #DDEEFF
+    BorderColor #336699
+    FontColor #222222
+}
+skinparam activityDiamond {
+    BackgroundColor #FFF3CC
+    BorderColor #AA7700
+}
+skinparam partition {
+    BackgroundColor #F8F8F8
+    BorderColor #AAAAAA
+}
+
+|Auction Runner|
+
+start
+
+:Auction interval fires;
+
+partition "For each egress port" {
+
+    :Read all bids from **bids-<egressPort>** (Atomix);
+
+    :Insert **virtual supply bid**\n(quantity = port capacity, price = reservation_price);
+
+    :Sort bids by **unit price descending**\n(O(n log n));
+
+    :Set **remaining_capacity** = port max capacity;
+    :Set **clearing_price** = reservation_price;
+
+    while (more bids AND remaining_capacity > 0?) is (yes)
+
+        if (bid.quantity ≤ remaining_capacity?) then (yes — fully accept)
+            :Accept bid fully;
+            :remaining_capacity -= bid.quantity;
+            :clearing_price = bid.unit_price;
+        else (no — marginal tier)
+            :Collect all bids tied at this price tier;
+            if (multiple tied bids?) then (yes — proportional split)
+                :Allocate remaining_capacity\nproportionally:\nalloc_i = ⌊R × q_i / Σq_j⌋;
+            else (single bid)
+                :Allocate all remaining_capacity\nto this bidder;
+            endif
+            :clearing_price = bid.unit_price;
+            :remaining_capacity = 0;
+        endif
+
+    endwhile (no)
+
+    :Compute charge for each winner:\n**charge = clearing_price × allocated_units**;
+
+    :Write results to **auction-history** (Atomix)\n(interval_id, egress_port, clearing_price, allocations);
+
+    :Debit each winner's balance in **credits-map** (Atomix);
+
+    :Update **utility-map**: Δutility = (valuation − clearing_price) × allocated_units;
+
+    :Publish **AuctionResultRecord** to\n**auction-results** Kafka topic;
+
+    :Clear **bids-<egressPort>** map\n(no bid carry-over to next round);
+
+}
+
+stop
+
+@enduml

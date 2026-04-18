@@ -7,7 +7,7 @@
                          │  Kubernetes Cluster (Minikube / GCP GKE)                         │
                          │                                                                    │
   ┌──────────────┐       │  ┌─────────────┐    REST     ┌───────────────┐                   │
-  │  Customer    │──────▶│  │ API Gateway │◀───────────▶│ Customer      │                   │
+  │  Customer    │──────▶│  │ API Server │◀───────────▶│ Customer      │                   │
   │  Agent(s)    │       │  │  :8080/:9090│             │ Agent pod(s)  │                   │
   └──────────────┘       │  └──────┬──────┘             └───────────────┘                   │
                          │         │ Atomix                                                   │
@@ -36,7 +36,7 @@
                          └──────────────────────────────────────────────────────────────────┘
 
 Scope boundary: everything inside the dashed box is this project.
-The physical switch / dummy producer is external to the control plane;
+The local switch controller is external to the control plane;
 Kafka is the interface between them.
 ```
 
@@ -44,7 +44,7 @@ Kafka is the interface between them.
 
 ## Component Responsibilities
 
-### API Gateway (`api/`)
+### API Server (`api/`)
 
 - **REST API** on `:8080` for agent interactions (`/flows`, `/bids`, `/credits`, `/auctions`).
 - **Prometheus metrics** on `:9090` (`/metrics`) — refreshes all gauges from Atomix on each scrape.
@@ -89,11 +89,11 @@ Kafka is the interface between them.
 
 | Store (Atomix map) | Key | Value | Writer | Readers |
 |--------------------|-----|-------|--------|---------|
-| `throughput-map` | `<switchID>\|<ingress>\|<egress>` | JSON `FlowMetricsValue` | Telemetry Processor | API Gateway |
-| `bids-<egressPort>` | `<ingressPort>` | `units\|unitPrice\|customerID` | API Gateway | Auction Runner |
-| `credits-map` | `<customerID>` | JSON `CustomerCredits` | Auction Runner (spend), API Gateway (init) | API Gateway, Agent (via `/credits`) |
-| `utility-map` | `<customerID>` | Integer string (cumulative utility) | Auction Runner | API Gateway |
-| `auction-history` | `<intervalID>\|<egressPort>` | JSON `AuctionHistoryRecord` | Auction Runner | API Gateway |
+| `throughput-map` | `<switchID>\|<ingress>\|<egress>` | JSON `FlowMetricsValue` | Telemetry Processor | API Server |
+| `bids-<egressPort>` | `<ingressPort>` | `units\|unitPrice\|customerID` | API Server | Auction Runner |
+| `credits-map` | `<customerID>` | JSON `CustomerCredits` | Auction Runner (spend), API Server (init) | API Server, Agent (via `/credits`) |
+| `utility-map` | `<customerID>` | Integer string (cumulative utility) | Auction Runner | API Server |
+| `auction-history` | `<intervalID>\|<egressPort>` | JSON `AuctionHistoryRecord` | Auction Runner | API Server |
 
 All maps are **last-write-wins**. Bid maps are cleared after each auction. Utility and credits maps accumulate across the experiment lifetime.
 
@@ -106,7 +106,7 @@ All maps are **last-write-wins**. Bid maps are cleared after each auction. Utili
 | D1 | Uniform-price auction | Single clearing price = second-price semantics → dominant strategy is to bid true valuation. |
 | D2 | `valuation_per_unit` per customer | Enables utility calculation: `(valuation − clearing) × units`. Required for utility-aligned rewards in Q-learning and for `valuation_based` strategy. |
 | D3 | Atomix for shared state | Distributed, consistent key-value store; survives pod restarts. |
-| D4 | Kafka as switch interface | Decouples control plane from data plane enforcement. Enables simulation via dummy producer. |
+| D4 | Kafka as switch interface | Decouples control plane from data plane enforcement. Enables the local switch controller to stand in for a physical switch. |
 | D5 | Prometheus + Grafana for observability | Standard ecosystem; scrape interval matches auction interval. |
 | D6 | gen-agent-deployments | Generates per-customer K8s Deployments from scenario YAML at deploy time — no hardcoded customer list in the Makefile. |
 | D7 | Utility-aligned Q-learning reward | `(valuation − clearing_price) × allocated_units` aligns RL reward with economic efficiency, allowing Q-learner to potentially discover the dominant strategy. |

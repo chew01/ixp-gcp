@@ -162,3 +162,20 @@ EMA-based price-following strategy.
 - **Params:** `ema_alpha` (default `"0.3"`), `ema_epsilon` (default `"5"`)
 - **Structural flaw:** EMA tracks past clearing prices; after a clearing-price spike the EMA lags and the agent under-bids. The correct bid in a second-price auction is `valuation_per_unit`, not the smoothed historical price. See §Second-Price Auctions above.
 - **Experiments:** 9 (as12345)
+
+---
+
+## Quick Reference
+
+Each customer in the scenario YAML specifies a `strategy` and optionally `valuation_per_unit` (max willingness to pay per kbps; defaults to `10 × reservation_price`). Utility = `(valuation_per_unit − clearing_price) × allocated_units`.
+
+| Strategy | Bid units | Bid price | Key behaviour |
+|----------|-----------|-----------|---------------|
+| `conservative` | 110% of throughput (min 1) | Last clearing price (floor: reservation) | Skips zero-traffic flows; never bids on dropped traffic — recovers slowly from congestion |
+| `demand_corrected` | 105% of throughput + drops (min 1) | Last clearing price (floor: reservation) | Accounts for drops in unit estimate; recovers from congestion faster |
+| `price_insensitive` | 105% of throughput + drops (min 1) | Fixed multiple of reservation price (default 10×) | Ignores market price; models latency-critical traffic. Param: `price_multiplier` |
+| `budget_aware` | 105% of throughput + drops (min 1) | Tiers by remaining credit fraction: >75% → clearing; >50% → 75%; >25% → 50%; ≤25% → reservation | Stretches finite credits. Falls back to `conservative` when `starting_balance` is 0. Params: `ema_alpha`, `budget_epsilon` |
+| `valuation_based` | 105% of throughput + drops (min 1) | Exactly `valuation_per_unit` (floor: reservation) | **Dominant strategy for second-price auctions.** Wins whenever clearing ≤ valuation. Requires `valuation_per_unit` in scenario. |
+| `throughput_optimizer` | Varies (0.8×–1.2× demand) | Depends on market: `valuation_per_unit` (cheap+high), last clearing (expensive+high), 90% of clearing (cheap+low), reservation (expensive+low) | Bids aggressively when cheap AND high demand; conserves credits otherwise. Params: `price_threshold`, `high_demand_kbps`, `price_window` |
+| `q_learning` | 105% of throughput + drops (min 1) | Last clearing × learned multiplier `[0.8×–3.0×]` (floor: reservation) | Tabular Q-learning over `(drop_bucket, budget_bucket)` state. Reward = utility per round. Params: `ql_alpha`, `ql_gamma`, `ql_epsilon` |
+| `exploratory` *(deprecated)* | 105% of throughput + drops (min 1) | EMA of clearing prices + epsilon (floor: reservation) | **Retained for Experiment 9 (negative result).** EMA price-following is suboptimal in a second-price auction. |

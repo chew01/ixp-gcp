@@ -1,0 +1,84 @@
+@startuml fig-3-3-auction-sequence
+title Figure 3.3 — Single Auction Round: Message Sequence
+
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+
+skinparam participant {
+    BackgroundColor #DDEEFF
+    BorderColor #336699
+}
+skinparam database {
+    BackgroundColor #EEF5DD
+    BorderColor #557700
+}
+skinparam collections {
+    BackgroundColor #FFF3CC
+    BorderColor #AA7700
+}
+
+participant "Local Switch\nController" as SW
+collections "Kafka\nswitch-telemetry" as KST
+participant "Telemetry\nProcessor" as TP
+database "Atomix\nthroughput-map" as AMAP
+participant "Customer\nAgent pod" as CA
+participant "API Server\n:8080" as GW
+database "Atomix\nbids-<egressPort>" as BMAP
+participant "Auction\nRunner" as AR
+database "Atomix\ncredits / utility /\nauction-history" as ASTATE
+collections "Kafka\nauction-results" as KAR
+
+== Telemetry phase (every telemetry_interval) ==
+
+SW -> KST : TelemetryRecord\n(switchID, ingress, egress, byte_counts)
+KST -> TP  : consume record
+TP -> AMAP : write FlowMetricsValue\n(throughput_kbps, drop_kbps,\negress_kbps, drop_rate_pct)
+
+== Bid submission phase (within auction_interval) ==
+
+CA -> GW   : GET /flows\n(X-Customer-ID: <id>)
+GW -> AMAP : read metrics for\ncustomer's ports
+AMAP --> GW : FlowMetricsValue
+GW --> CA  : flow metrics JSON
+
+CA -> GW   : GET /auctions?egress_port=X\n(X-Customer-ID: <id>)
+GW -> ASTATE : read auction-history
+ASTATE --> GW : AuctionHistoryRecord[]
+GW --> CA  : last clearing price, last allocation
+
+CA -> CA   : compute bid\n(strategy.ComputeBid(BidContext))
+
+CA -> GW   : POST /bids\n{ingress_port, egress_port, units, price}\n(X-Customer-ID: <id>)
+GW -> GW   : validate customer owns\n(ingress, egress) pair
+GW -> BMAP : write bid\nkey=ingressPort, value="units|price|customerID"
+GW --> CA  : 201 Created
+
+== Auction clearing phase (every auction_interval) ==
+
+AR -> BMAP : read all bids for\negress port X
+BMAP --> AR : bid set
+
+AR -> AR   : insert virtual supply bid\nat reservation_price
+AR -> AR   : sort by unit_price DESC
+AR -> AR   : linear scan → compute\nallocations + clearing_price
+AR -> AR   : proportional split\nat marginal tier (if needed)
+
+AR -> ASTATE : write AuctionHistoryRecord\n(interval_id, clearing_price, allocations)
+AR -> ASTATE : debit credits-map\n(clearing_price × allocated_units per winner)
+AR -> ASTATE : update utility-map\n(Δ = (valuation − clearing) × units)
+
+AR -> KAR  : publish AuctionResultRecord\n(clearing_price, per-customer allocations)
+
+AR -> BMAP : clear bid map\n(no carry-over)
+
+== Next bid cycle ==
+
+CA -> GW   : GET /credits\n(X-Customer-ID: <id>)
+GW -> ASTATE : read credits-map
+ASTATE --> GW : CustomerCredits
+GW --> CA  : {total_spent, starting_balance}
+
+@enduml

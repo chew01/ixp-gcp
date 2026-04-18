@@ -17,6 +17,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const atomixTimeout = 10 * time.Second
+
 type FlowState struct {
 	LastSeenTime time.Time `json:"last_seen_time"`
 	LastRxBytes  uint64    `json:"last_rx_bytes"`
@@ -37,7 +39,7 @@ type Consumer struct {
 	throughputMap atomixmap.Map[string, string]
 }
 
-func NewConsumer(ctx context.Context, kafkaBootstrap, topic string, dialer *kafka.Dialer) (*Consumer, error) {
+func NewConsumer(kafkaBootstrap, topic string, dialer *kafka.Dialer) *Consumer {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{kafkaBootstrap},
 		Topic:   topic,
@@ -45,25 +47,39 @@ func NewConsumer(ctx context.Context, kafkaBootstrap, topic string, dialer *kafk
 		Dialer:  dialer,
 	})
 
-	flowStateMap, err := atomix.Map[string, string]("flow-state-map").
-		Codec(generic.Scalar[string]()).
-		Get(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get flow state map: %w", err)
-	}
+	return &Consumer{reader: reader}
+}
 
-	throughputMap, err := atomix.Map[string, string]("throughput-map").
-		Codec(generic.Scalar[string]()).
-		Get(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get throughput map: %w", err)
-	}
+// initMaps connects to the Atomix store with per-attempt timeouts,
+// retrying until the sidecar proxy is ready (handles the startup race
+// where the proxy hasn't connected to the consensus-store yet).
+func (c *Consumer) initMaps(ctx context.Context) error {
+	for {
+		tCtx, cancel := context.WithTimeout(ctx, atomixTimeout)
+		fsm, err := atomix.Map[string, string]("flow-state-map").
+			Codec(generic.Scalar[string]()).
+			Get(tCtx)
+		cancel()
+		if err != nil {
+			log.Printf("Waiting for Atomix flow-state-map: %v", err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		c.flowStateMap = fsm
 
-	return &Consumer{
-		reader:        reader,
-		flowStateMap:  flowStateMap,
-		throughputMap: throughputMap,
-	}, nil
+		tCtx, cancel = context.WithTimeout(ctx, atomixTimeout)
+		tm, err := atomix.Map[string, string]("throughput-map").
+			Codec(generic.Scalar[string]()).
+			Get(tCtx)
+		cancel()
+		if err != nil {
+			log.Printf("Waiting for Atomix throughput-map: %v", err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		c.throughputMap = tm
+		return nil
+	}
 }
 
 func (c *Consumer) Close() {
@@ -71,6 +87,11 @@ func (c *Consumer) Close() {
 }
 
 func (c *Consumer) Run(ctx context.Context) {
+	if err := c.initMaps(ctx); err != nil {
+		log.Fatalf("Failed to initialize Atomix maps: %v", err)
+	}
+	log.Println("Atomix maps ready")
+
 	for {
 		msg, err := c.reader.ReadMessage(ctx)
 		if err != nil {

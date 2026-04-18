@@ -160,7 +160,7 @@ kubectl logs deployment/customer-agent-as12345
 Common causes:
 - `CUSTOMER_ID not found in scenario`: customer ID in the deployment doesn't match the scenario YAML.
 - `unknown strategy "backoff"`: `backoff` was removed; update the scenario to use a supported strategy.
-- `API_BASE_URL unreachable`: API gateway not yet running or wrong service name.
+- `API_BASE_URL unreachable`: API server not yet running or wrong service name.
 
 ### Build Fails After `shared/` Change
 

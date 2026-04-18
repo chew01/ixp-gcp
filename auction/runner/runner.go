@@ -124,7 +124,13 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 
 	log.Printf("[Auction %d] %d bids for %d units", egressPort, len(bids), capacity)
 
+	tBidsCollected := time.Now()
+	log.Printf("[bids-collected] port=%d bids=%d t=%s", egressPort, len(bids), tBidsCollected.UTC().Format(time.RFC3339Nano))
+
 	allocations, clearingPrice := algo.RunReservationPriceAuction(intervalID, egressPort, capacity, bids, r.scenario.ReservationPrice)
+
+	tCleared := time.Now()
+	log.Printf("[cleared] port=%d clearing_price=%d elapsed_ms=%d", egressPort, clearingPrice, tCleared.Sub(tBidsCollected).Milliseconds())
 
 	for _, alloc := range allocations {
 		err := r.WriteResults(ctx, "sw-1", alloc.IngressPort, alloc.EgressPort, alloc.AllocatedUnits)
@@ -134,6 +140,9 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 		}
 		log.Printf("Allocated %d units (%d->%d)", alloc.AllocatedUnits, alloc.IngressPort, alloc.EgressPort)
 	}
+
+	tPublished := time.Now()
+	log.Printf("[published-to-kafka] port=%d elapsed_ms=%d", egressPort, tPublished.Sub(tBidsCollected).Milliseconds())
 
 	// Bill credits per customer.
 	// Bill credits: allocated_units * clearing_price per customer (grouped)

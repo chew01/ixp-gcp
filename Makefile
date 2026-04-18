@@ -1,6 +1,25 @@
 VENDOR_MODULES = api auction dummy telemetry agent dashboard
 
 # ============================================================
+# Container registry (cloud deployment)
+#
+# Leave DOCKER_REGISTRY unset (default) to build images directly into the
+# Minikube daemon — the original local workflow is unchanged.
+#
+# Set DOCKER_REGISTRY to push images to a remote registry instead:
+#   export DOCKER_REGISTRY=registry.digitalocean.com/my-registry
+#   export IMAGE_TAG=v1.0.0
+#   make services DOCKER_REGISTRY=$DOCKER_REGISTRY IMAGE_TAG=$IMAGE_TAG
+# ============================================================
+DOCKER_REGISTRY ?=
+IMAGE_TAG       ?= latest
+
+# image_ref(name) — returns the full image reference.
+#   With DOCKER_REGISTRY: registry.digitalocean.com/my-registry/name:v1.0.0
+#   Without:              name:local  (Minikube local image)
+image_ref = $(if $(DOCKER_REGISTRY),$(DOCKER_REGISTRY)/$(1):$(IMAGE_TAG),$(1):local)
+
+# ============================================================
 # External Kafka support
 #
 # Plaintext (in-cluster Strimzi default):
@@ -34,21 +53,35 @@ KAFKA_TLS_KEY_FILE  ?=
 
 deploy-api:
 	@echo "==> Deploying API Gateway..."
-	eval $$(minikube docker-env) && docker build -t api-gateway:local ./api
+	$(if $(DOCKER_REGISTRY),\
+		docker build --platform linux/amd64 -t $(call image_ref,api-gateway) ./api && docker push $(call image_ref,api-gateway),\
+		eval $$(minikube docker-env) && docker build -t api-gateway:local ./api)
 	kubectl apply -f ./api/ingress.yaml
 	kubectl apply -f ./api/deployment.yaml
+	kubectl set image deployment/api-gateway api-gateway=$(call image_ref,api-gateway)
 	kubectl apply -f ./api/service-monitor.yaml
 
 deploy-atomix:
 	@echo "==> Deploying Atomix..."
-	helm install -n kube-system atomix-runtime atomix/atomix-runtime --wait
+	@if helm status atomix-runtime -n kube-system >/dev/null 2>&1; then \
+		echo "    Atomix Helm release already installed — skipping."; \
+	else \
+		helm install -n kube-system atomix-runtime atomix/atomix-runtime --wait; \
+	fi
 	kubectl apply -f ./atomix/storage-profile.yaml
 	kubectl apply -f ./atomix/store.yaml
+	@echo "==> Patching StatefulSet with init container (DO block-storage ignores fsGroup)..."
+	kubectl rollout status statefulset/consensus-store --timeout=30s || true
+	kubectl patch statefulset consensus-store --type='json' \
+		-p='[{"op":"add","path":"/spec/template/spec/initContainers","value":[{"name":"fix-permissions","image":"busybox","command":["sh","-c","chown -R 1000:1000 /var/lib/atomix"],"volumeMounts":[{"name":"data","mountPath":"/var/lib/atomix"}]}]}]'
 
 deploy-auction:
 	@echo "==> Deploying Auction Runner..."
-	eval $$(minikube docker-env) && docker build -t auction-runner:local ./auction
+	$(if $(DOCKER_REGISTRY),\
+		docker build --platform linux/amd64 -t $(call image_ref,auction-runner) ./auction && docker push $(call image_ref,auction-runner),\
+		eval $$(minikube docker-env) && docker build -t auction-runner:local ./auction)
 	kubectl apply -f ./auction/deployment.yaml
+	kubectl set image deployment/auction-runner auction-runner=$(call image_ref,auction-runner)
 	kubectl set env deployment/auction-runner KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
 ifdef KAFKA_TLS_CA_FILE
 	kubectl set env deployment/auction-runner \
@@ -65,8 +98,11 @@ deploy-config:
 
 deploy-dummy:
 	@echo "==> Deploying Dummy Producer..."
-	eval $$(minikube docker-env) && docker build -t dummy-producer:local ./dummy
+	$(if $(DOCKER_REGISTRY),\
+		docker build --platform linux/amd64 -t $(call image_ref,dummy-producer) ./dummy && docker push $(call image_ref,dummy-producer),\
+		eval $$(minikube docker-env) && docker build -t dummy-producer:local ./dummy)
 	kubectl apply -f ./dummy/deployment.yaml
+	kubectl set image deployment/dummy-producer dummy-producer=$(call image_ref,dummy-producer)
 	kubectl set env deployment/dummy-producer KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
 ifdef KAFKA_TLS_CA_FILE
 	kubectl set env deployment/dummy-producer \
@@ -78,7 +114,11 @@ endif
 deploy-kafka:
 ifndef KAFKA_EXTERNAL
 	@echo "==> Deploying Kafka (in-cluster Strimzi)..."
-	helm install strimzi-cluster-operator oci://quay.io/strimzi-helm/strimzi-kafka-operator
+	@if helm status strimzi-cluster-operator >/dev/null 2>&1; then \
+		echo "    Strimzi Helm release already installed — skipping."; \
+	else \
+		helm install strimzi-cluster-operator oci://quay.io/strimzi-helm/strimzi-kafka-operator; \
+	fi
 	kubectl apply -f ./kafka/kafka.yaml
 	kubectl wait kafka/ixp-kafka --for=condition=Ready --timeout=300s
 else
@@ -103,8 +143,11 @@ deploy-monitoring:
 
 deploy-telemetry:
 	@echo "==> Deploying Telemetry Processor..."
-	eval $$(minikube docker-env) && docker build -t telemetry-service:local ./telemetry
+	$(if $(DOCKER_REGISTRY),\
+		docker build --platform linux/amd64 -t $(call image_ref,telemetry-service) ./telemetry && docker push $(call image_ref,telemetry-service),\
+		eval $$(minikube docker-env) && docker build -t telemetry-service:local ./telemetry)
 	kubectl apply -f ./telemetry/deployment.yaml
+	kubectl set image deployment/telemetry-service telemetry-service=$(call image_ref,telemetry-service)
 	kubectl set env deployment/telemetry-service KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
 ifdef KAFKA_TLS_CA_FILE
 	kubectl set env deployment/telemetry-service \
@@ -115,8 +158,11 @@ endif
 
 deploy-agent:
 	@echo "==> Deploying Customer Agent (manual single-agent testing only)..."
-	eval $$(minikube docker-env) && docker build -t customer-agent:local ./agent
+	$(if $(DOCKER_REGISTRY),\
+		docker build --platform linux/amd64 -t $(call image_ref,customer-agent) ./agent && docker push $(call image_ref,customer-agent),\
+		eval $$(minikube docker-env) && docker build -t customer-agent:local ./agent)
 	kubectl apply -f ./agent/deployment.yaml
+	kubectl set image deployment/customer-agent customer-agent=$(call image_ref,customer-agent)
 
 # ============================================================
 # Grouped deploys
@@ -149,16 +195,20 @@ load-experiment:
 	kubectl create configmap test-scenario \
 		--from-file=scenario.yaml=$(EXPERIMENT_SCENARIO) \
 		-o yaml --dry-run=client | kubectl apply -f -
-	$(MAKE) deploy-dummy
+	$(MAKE) deploy-dummy KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP) $(if $(DOCKER_REGISTRY),DOCKER_REGISTRY=$(DOCKER_REGISTRY) IMAGE_TAG=$(IMAGE_TAG),)
 	@echo "==> Building customer-agent image..."
-	eval $$(minikube docker-env) && docker build -t customer-agent:local ./agent
+	$(if $(DOCKER_REGISTRY),\
+		docker build --platform linux/amd64 -t $(call image_ref,customer-agent) ./agent && docker push $(call image_ref,customer-agent),\
+		eval $$(minikube docker-env) && docker build -t customer-agent:local ./agent)
 	kubectl rollout restart deployment/auction-runner
 	kubectl rollout restart deployment/telemetry-service
 	kubectl rollout restart deployment/api-gateway
 	kubectl rollout status deployment/auction-runner --timeout=90s
 	kubectl rollout status deployment/api-gateway --timeout=90s
 	$(MAKE) delete-agents
-	cd scripts/gen-agent-deployments && go run . ../../$(EXPERIMENT_SCENARIO) | kubectl apply -f -
+	cd scripts/gen-agent-deployments && go run . \
+		$(if $(DOCKER_REGISTRY),--image $(call image_ref,customer-agent),) \
+		../../$(EXPERIMENT_SCENARIO) | kubectl apply -f -
 	@echo "==> Experiment $(experiment) is live."
 
 # ============================================================
@@ -168,17 +218,19 @@ load-experiment:
 # Legacy aliases kept for backward compatibility.
 #
 # Experiment index:
-#   1    — Baseline agent correctness (conservative × 2)
-#   2a   — Conservative vs conservative, spike traffic
-#   2b   — Conservative vs demand_corrected, spike traffic
-#   3    — Conservative vs price_insensitive, heterogeneous
-#   4a   — Conservative with finite budget
-#   4b   — Budget-aware with finite budget
-#   4c   — Throughput optimizer vs conservative
-#   5    — Auction convergence and stability
-#   6a   — Sensitivity: 10s interval
-#   6b   — Sensitivity: 30s interval
-#   6c   — Sensitivity: 60s interval
+#   1          — Baseline agent correctness (conservative × 2); also 2-bidder pipeline-latency baseline
+#   2a         — Conservative vs conservative, spike traffic
+#   2b         — Conservative vs demand_corrected, spike traffic
+#   3          — Conservative vs price_insensitive, heterogeneous
+#   4a         — Conservative with finite budget
+#   4b         — Budget-aware with finite budget
+#   4c         — Throughput optimizer vs conservative
+#   5          — Auction convergence and stability (valuation_based × 2, Section 5.3.2)
+#   6a         — Sensitivity: 10s interval
+#   6b         — Sensitivity: 30s interval
+#   6c         — Sensitivity: 60s interval
+#   perf-5bidders  — Pipeline latency measurement: 5 bidders (Section 5.2.2)
+#   perf-10bidders — Pipeline latency measurement: 10 bidders (Section 5.2.2)
 #   7    — Valuation-based dominant strategy vs conservative
 #   7b   — Q-learning convergence vs valuation_based
 #   8    — Mixed valuations (same strategy, different valuations)
@@ -193,7 +245,8 @@ load-experiment:
         deploy-experiment-6a deploy-experiment-6b deploy-experiment-6c \
         deploy-experiment-7 deploy-experiment-7b \
         deploy-experiment-8 \
-        deploy-experiment-9
+        deploy-experiment-9 \
+        deploy-experiment-perf-5bidders deploy-experiment-perf-10bidders
 
 # deploy-real: load etc/scenario/scenario.yaml against a real switch.
 # Pushes the config, restarts core services, and deploys one agent pod per
@@ -202,9 +255,13 @@ deploy-real:
 	@echo "==> Loading real-switch scenario..."
 	$(MAKE) load-scenario
 	@echo "==> Building customer-agent image..."
-	eval $$(minikube docker-env) && docker build -t customer-agent:local ./agent
+	$(if $(DOCKER_REGISTRY),\
+		docker build --platform linux/amd64 -t $(call image_ref,customer-agent) ./agent && docker push $(call image_ref,customer-agent),\
+		eval $$(minikube docker-env) && docker build -t customer-agent:local ./agent)
 	$(MAKE) delete-agents
-	cd scripts/gen-agent-deployments && go run . ../../etc/scenario/scenario.yaml | kubectl apply -f -
+	cd scripts/gen-agent-deployments && go run . \
+		$(if $(DOCKER_REGISTRY),--image $(call image_ref,customer-agent),) \
+		../../etc/scenario/scenario.yaml | kubectl apply -f -
 	@echo "==> Real-switch scenario live."
 
 # load-scenario: bare reload (no agent restart) — for manual scenario swaps.
@@ -275,6 +332,13 @@ deploy-experiment-8:
 deploy-experiment-9:
 	$(MAKE) load-experiment experiment=9
 
+# Performance experiments — auction pipeline latency (Section 5.2.2)
+deploy-experiment-perf-5bidders:
+	$(MAKE) load-experiment experiment=perf-5bidders
+
+deploy-experiment-perf-10bidders:
+	$(MAKE) load-experiment experiment=perf-10bidders
+
 # ============================================================
 # Utilities
 # ============================================================
@@ -309,46 +373,48 @@ prometheus-ui:
 	@echo "Prometheus at http://localhost:9090"
 
 # Export key experiment metrics from Prometheus for the last hour.
-# Usage: make export-metrics [PROMETHEUS_URL=http://...] [SINCE=2h]
+# Usage: make export-metrics [PROMETHEUS_URL=http://...] [SINCE=1800]
+# SINCE is in seconds (default 3600 = 1 hour). Examples: 1800 (30m), 7200 (2h).
 # Output: data/experiment-<timestamp>.json
-SINCE ?= 1 hour
+SINCE ?= 3600
+PROM_START = $$(( $$(date +%s) - $(SINCE) ))
 export-metrics:
 	@mkdir -p data
 	@TS=$$(date +%Y%m%d-%H%M%S); FILE=data/experiment-$$TS.json; \
 	printf '{"clearing_price":' > $$FILE; \
 	curl -sG "$(PROMETHEUS_URL)/api/v1/query_range" \
 		--data-urlencode "query=ixp_auction_clearing_price" \
-		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s)" \
+		--data-urlencode "start=$(PROM_START)" \
 		--data-urlencode "end=$$(date +%s)" \
 		--data-urlencode "step=30s" >> $$FILE; \
 	printf ',"allocation_kbps":' >> $$FILE; \
 	curl -sG "$(PROMETHEUS_URL)/api/v1/query_range" \
 		--data-urlencode "query=ixp_customer_allocation_kbps" \
-		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s)" \
+		--data-urlencode "start=$(PROM_START)" \
 		--data-urlencode "end=$$(date +%s)" \
 		--data-urlencode "step=30s" >> $$FILE; \
 	printf ',"flow_drop_rate":' >> $$FILE; \
 	curl -sG "$(PROMETHEUS_URL)/api/v1/query_range" \
 		--data-urlencode "query=ixp_flow_drop_rate_percent" \
-		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s)" \
+		--data-urlencode "start=$(PROM_START)" \
 		--data-urlencode "end=$$(date +%s)" \
 		--data-urlencode "step=30s" >> $$FILE; \
 	printf ',"flow_throughput":' >> $$FILE; \
 	curl -sG "$(PROMETHEUS_URL)/api/v1/query_range" \
 		--data-urlencode "query=ixp_flow_throughput_kbps" \
-		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s)" \
+		--data-urlencode "start=$(PROM_START)" \
 		--data-urlencode "end=$$(date +%s)" \
 		--data-urlencode "step=30s" >> $$FILE; \
 	printf ',"utility_per_round":' >> $$FILE; \
 	curl -sG "$(PROMETHEUS_URL)/api/v1/query_range" \
 		--data-urlencode "query=increase(ixp_agent_utility_total[30s])" \
-		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s)" \
+		--data-urlencode "start=$(PROM_START)" \
 		--data-urlencode "end=$$(date +%s)" \
 		--data-urlencode "step=30s" >> $$FILE; \
 	printf ',"cumulative_utility":' >> $$FILE; \
 	curl -sG "$(PROMETHEUS_URL)/api/v1/query_range" \
 		--data-urlencode "query=ixp_agent_utility_total" \
-		--data-urlencode "start=$$(date -d '$(SINCE) ago' +%s)" \
+		--data-urlencode "start=$(PROM_START)" \
 		--data-urlencode "end=$$(date +%s)" \
 		--data-urlencode "step=30s" >> $$FILE; \
 	printf '}' >> $$FILE; \
@@ -363,14 +429,19 @@ build-dashboard:
 	@echo "==> Vendoring dashboard dependencies..."
 	cd dashboard && go mod vendor
 	@echo "==> Building dashboard Docker image (includes frontend build)..."
-	eval $$(minikube docker-env) && docker build -t dashboard:local ./dashboard
+	$(if $(DOCKER_REGISTRY),\
+		docker build --platform linux/amd64 -t $(call image_ref,dashboard) ./dashboard && docker push $(call image_ref,dashboard),\
+		eval $$(minikube docker-env) && docker build -t dashboard:local ./dashboard)
 
 deploy-dashboard:
 	@echo "==> Deploying Dashboard..."
 	kubectl apply -f dashboard/rbac.yaml
 	cd dashboard && go mod vendor
-	eval $$(minikube docker-env) && docker build -t dashboard:local ./dashboard
+	$(if $(DOCKER_REGISTRY),\
+		docker build --platform linux/amd64 -t $(call image_ref,dashboard) ./dashboard && docker push $(call image_ref,dashboard),\
+		eval $$(minikube docker-env) && docker build -t dashboard:local ./dashboard)
 	kubectl apply -f dashboard/deployment.yaml
+	kubectl set image deployment/dashboard dashboard=$(call image_ref,dashboard)
 	kubectl set env deployment/dashboard KAFKA_BOOTSTRAP=$(KAFKA_BOOTSTRAP)
 ifdef KAFKA_TLS_CA_FILE
 	kubectl set env deployment/dashboard \
@@ -382,6 +453,96 @@ endif
 dashboard-ui:
 	@echo "==> Opening dashboard at http://localhost:8082 ..."
 	kubectl port-forward svc/dashboard 8082:8082
+
+# ============================================================
+# Measurement targets for Section 5 evaluation
+# ============================================================
+.PHONY: load-test-api measure-kafka-lag measure-pipeline-latency measure-e2e-latency
+
+# 5.2.1 — API throughput and latency
+# Requires: hey  (go install github.com/rakyll/hey@latest)
+# Requires: API gateway reachable at API_URL.
+#   Local:  make prometheus-ui first, then use default API_URL=http://localhost:8080
+#   Cloud:  export API_URL=http://<DO-loadbalancer-IP>
+#
+# Usage examples:
+#   make load-test-api                            # 2 concurrent clients (default)
+#   make load-test-api CONCURRENCY=5 API_URL=http://...
+#   make load-test-api CONCURRENCY=10
+#   make load-test-api CONCURRENCY=20
+API_URL     ?= http://localhost:8080
+CONCURRENCY ?= 2
+load-test-api:
+	@command -v hey >/dev/null 2>&1 || \
+	  (echo "ERROR: 'hey' not found. Install with: go install github.com/rakyll/hey@latest"; exit 1)
+	@echo "==> POST /bids  concurrency=$(CONCURRENCY)  60s"
+	hey -c $(CONCURRENCY) -z 60s -m POST \
+		-H "X-Customer-ID: as12345" \
+		-H "Content-Type: application/json" \
+		-d '{"ingress_port":1,"egress_port":0,"units":50,"unit_price":60}' \
+		$(API_URL)/bids
+	@echo "==> GET /flows  concurrency=$(CONCURRENCY)  60s"
+	hey -c $(CONCURRENCY) -z 60s \
+		-H "X-Customer-ID: as12345" \
+		"$(API_URL)/flows?switch_id=sw-1&ingress_port=1&egress_port=0"
+
+# 5.2.3 — Kafka consumer lag
+# Describes all consumer groups (telemetry-consumer, auction-consumer).
+# Run while an experiment is active to capture steady-state lag.
+KAFKA_POD ?= $(shell kubectl get pods -l strimzi.io/name=ixp-kafka-kafka -o name 2>/dev/null | head -1 | sed 's|pod/||')
+measure-kafka-lag:
+	@test -n "$(KAFKA_POD)" || (echo "ERROR: no Kafka pod found (is Strimzi running?)"; exit 1)
+	kubectl exec -it $(KAFKA_POD) -- \
+	  bin/kafka-consumer-groups.sh \
+	    --bootstrap-server localhost:9092 \
+	    --describe --all-groups
+
+# 5.2.3 — Kafka consumer lag time series
+# Samples consumer-group lag every INTERVAL seconds for COUNT iterations.
+# Run while an experiment is active; output goes to data/kafka-lag.txt.
+# Usage:  make measure-kafka-lag-series              (30 samples, 10s apart)
+#         make measure-kafka-lag-series COUNT=60 INTERVAL=5
+LAG_COUNT    ?= 30
+LAG_INTERVAL ?= 10
+measure-kafka-lag-series:
+	@test -n "$(KAFKA_POD)" || (echo "ERROR: no Kafka pod found (is Strimzi running?)"; exit 1)
+	@for i in $$(seq 1 $(LAG_COUNT)); do \
+	  ts=$$(date -u +%H:%M:%S); \
+	  lag_line=$$(kubectl exec $(KAFKA_POD) -- \
+	    bin/kafka-consumer-groups.sh \
+	    --bootstrap-server localhost:9092 \
+	    --describe --all-groups 2>/dev/null \
+	    | grep -v "^$$" | grep -v "^GROUP"); \
+	  current=$$(echo "$$lag_line" | awk '{print $$4}'); \
+	  end=$$(echo "$$lag_line" | awk '{print $$5}'); \
+	  lag=$$(echo "$$lag_line" | awk '{print $$6}'); \
+	  echo "$$ts  current=$$current  end=$$end  lag=$$lag"; \
+	  sleep $(LAG_INTERVAL); \
+	done | tee data/kafka-lag.txt
+
+# 5.2.2 — Auction pipeline latency
+# Greps the auction-runner logs for the three timing markers added to runner.go.
+# Run after an experiment has completed ≥30 intervals; pipe through a script or
+# spreadsheet to compute per-round elapsed_ms mean and variance.
+measure-pipeline-latency:
+	kubectl logs deployment/auction-runner \
+	  | grep -E '\[(bids-collected|cleared|published-to-kafka)\]'
+
+# 5.2.4 — Control loop end-to-end latency
+# Prints the dummy-producer's spike log lines alongside a Prometheus range query
+# for ixp_customer_allocation_kbps so you can compare timestamps manually.
+# Run after a spike experiment (e.g. experiment=7) with prometheus-ui active.
+# Override SINCE to widen the look-back window (e.g. SINCE=2h).
+measure-e2e-latency:
+	@echo "==> Spike timestamp from dummy-producer logs:"
+	kubectl logs deployment/dummy-producer | grep -iE 'spike|traffic.*increased|spike_after'
+	@echo ""
+	@echo "==> Allocation time series from Prometheus (step=5s):"
+	curl -sG "$(PROMETHEUS_URL)/api/v1/query_range" \
+		--data-urlencode "query=ixp_customer_allocation_kbps" \
+		--data-urlencode "start=$(PROM_START)" \
+		--data-urlencode "end=$$(date +%s)" \
+		--data-urlencode "step=5s" | python3 -m json.tool
 
 stop:
 	minikube delete

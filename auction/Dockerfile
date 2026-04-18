@@ -1,10 +1,6 @@
 # ===== STAGE 1: Build =====
 FROM golang:1.25-alpine AS builder
 
-# Install git and bash for go modules
-RUN apk add --no-cache git bash
-
-# Set working directory
 WORKDIR /app
 
 # Copy go.mod and go.sum first for caching
