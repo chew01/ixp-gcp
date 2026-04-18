@@ -9,6 +9,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/atomix/go-sdk/pkg/atomix"
@@ -37,6 +38,13 @@ func New(writer *kafka.Writer, interval time.Duration, scenario *scenario.Scenar
 	}
 }
 
+type portResult struct {
+	egressPort    uint64
+	intervalID    string
+	allocations   []models.Allocation
+	clearingPrice int
+}
+
 func (r *AuctionRunner) Run(ctx context.Context) {
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
@@ -44,9 +52,7 @@ func (r *AuctionRunner) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			for _, port := range r.scenario.Switches[0].EgressPorts {
-				r.runOnce(ctx, r.scenario.Switches[0].MaxCapacity, uint64(port))
-			}
+			r.runAll(ctx)
 		case <-ctx.Done():
 			log.Println("Auction runner shutting down")
 			return
@@ -54,9 +60,67 @@ func (r *AuctionRunner) Run(ctx context.Context) {
 	}
 }
 
-func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort uint64) {
-	intervalID := currentIntervalID(r.interval)
+func (r *AuctionRunner) runAll(ctx context.Context) {
+	ports := r.scenario.Switches[0].EgressPorts
+	capacity := r.scenario.Switches[0].MaxCapacity
 
+	// Phase 1: run each port's auction in parallel
+	results := make([]portResult, len(ports))
+	var wg sync.WaitGroup
+	for i, port := range ports {
+		wg.Add(1)
+		go func(i int, port uint32) {
+			defer wg.Done()
+			results[i] = r.runAuction(ctx, capacity, uint64(port))
+		}(i, port)
+	}
+	wg.Wait()
+
+	// Phase 2: batch write all Kafka messages in a single call
+	var msgs []kafka.Message
+	for _, res := range results {
+		for _, alloc := range res.allocations {
+			msg, err := r.buildResultMessage("sw-1", alloc)
+			if err != nil {
+				log.Printf("Error building result message: %v", err)
+				continue
+			}
+			msgs = append(msgs, msg)
+		}
+	}
+	if len(msgs) > 0 {
+		if err := r.writer.WriteMessages(ctx, msgs...); err != nil {
+			log.Printf("Error writing Kafka messages: %v", err)
+		}
+	}
+
+	// Phase 3a: aggregate credits and utility across all ports, one write per customer
+	if err := r.updateAllCredits(ctx, results); err != nil {
+		log.Printf("Error updating credits: %v", err)
+	}
+	if err := r.updateAllUtility(ctx, results); err != nil {
+		log.Printf("Error updating utility: %v", err)
+	}
+
+	// Phase 3b: auction history writes are keyed per egress port — run in parallel
+	var wg2 sync.WaitGroup
+	for _, res := range results {
+		if res.allocations == nil {
+			continue
+		}
+		wg2.Add(1)
+		go func(res portResult) {
+			defer wg2.Done()
+			if err := r.storeAuctionHistory(ctx, res.intervalID, res.egressPort, res.clearingPrice, res.allocations); err != nil {
+				log.Printf("Error storing auction history: %v", err)
+			}
+		}(res)
+	}
+	wg2.Wait()
+}
+
+func (r *AuctionRunner) runAuction(ctx context.Context, capacity uint64, egressPort uint64) portResult {
+	intervalID := currentIntervalID(r.interval)
 	log.Printf("[Auction %d] Interval %s running", egressPort, intervalID)
 
 	var bids []models.Bid
@@ -67,12 +131,13 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 		Get(ctx)
 	if err != nil {
 		log.Printf("Error getting bid map: %v", err)
+		return portResult{}
 	}
 
 	list, err := bidMap.List(ctx)
 	if err != nil {
 		log.Printf("Error listing bids: %v", err)
-		return
+		return portResult{}
 	}
 
 	for {
@@ -119,7 +184,7 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 
 	if capacity <= 0 || len(bids) == 0 {
 		log.Println("No capacity or no bids, skipping auction")
-		return
+		return portResult{}
 	}
 
 	log.Printf("[Auction %d] %d bids for %d units", egressPort, len(bids), capacity)
@@ -132,76 +197,55 @@ func (r *AuctionRunner) runOnce(ctx context.Context, capacity uint64, egressPort
 	tCleared := time.Now()
 	log.Printf("[cleared] port=%d clearing_price=%d elapsed_ms=%d", egressPort, clearingPrice, tCleared.Sub(tBidsCollected).Milliseconds())
 
-	for _, alloc := range allocations {
-		err := r.WriteResults(ctx, "sw-1", alloc.IngressPort, alloc.EgressPort, alloc.AllocatedUnits)
-		if err != nil {
-			log.Printf("Error setting up: %v", err)
-			return
-		}
-		log.Printf("Allocated %d units (%d->%d)", alloc.AllocatedUnits, alloc.IngressPort, alloc.EgressPort)
-	}
-
-	tPublished := time.Now()
-	log.Printf("[published-to-kafka] port=%d elapsed_ms=%d", egressPort, tPublished.Sub(tBidsCollected).Milliseconds())
-
-	// Bill credits per customer.
-	// Bill credits: allocated_units * clearing_price per customer (grouped)
-	if err := r.updateCredits(ctx, allocations, clearingPrice); err != nil {
-		log.Printf("Error updating credits: %v", err)
-	}
-
-	// Accumulate utility: (valuation_per_unit - clearing_price) * allocated_units per customer.
-	if err := r.updateUtility(ctx, allocations, clearingPrice); err != nil {
-		log.Printf("Error updating utility: %v", err)
-	}
-
-	// Store auction history, including clearing price and per-customer allocations.
-	if err := r.storeAuctionHistory(ctx, intervalID, egressPort, clearingPrice, allocations); err != nil {
-		log.Printf("Error storing auction history: %v", err)
-	}
-
-	err = bidMap.Clear(ctx)
-	if err != nil {
+	// Clear the bid map now that we've captured all bids for this interval.
+	if err := bidMap.Clear(ctx); err != nil {
 		log.Printf("Error clearing bids: %v", err)
 	}
 
-	log.Printf("[Auction %d] Interval %s clearing price %d", egressPort, intervalID, clearingPrice)
+	for _, alloc := range allocations {
+		log.Printf("Allocated %d units (%d->%d)", alloc.AllocatedUnits, alloc.IngressPort, alloc.EgressPort)
+	}
+
+	return portResult{
+		egressPort:    egressPort,
+		intervalID:    intervalID,
+		allocations:   allocations,
+		clearingPrice: clearingPrice,
+	}
 }
 
-func (r *AuctionRunner) WriteResults(ctx context.Context, switchID string, ingressPort, egressPort, bandwidthKbps uint64) error {
-	ingressPort32 := uint32(ingressPort)
-	egressPort32 := uint32(egressPort)
+func (r *AuctionRunner) buildResultMessage(switchID string, alloc models.Allocation) (kafka.Message, error) {
+	ingressPort32 := uint32(alloc.IngressPort)
+	egressPort32 := uint32(alloc.EgressPort)
 	result := &pb.AuctionResult{
 		FlowId: &pb.Flow{
 			IngressPort: &ingressPort32,
 			EgressPort:  &egressPort32,
 		},
-		BandwidthKbps: bandwidthKbps,
+		BandwidthKbps: alloc.AllocatedUnits,
 	}
 
 	key := fmt.Sprintf("%s-results", switchID)
 	value, err := proto.Marshal(result)
 	if err != nil {
-		return fmt.Errorf("marshal auction result: %w", err)
+		return kafka.Message{}, fmt.Errorf("marshal auction result: %w", err)
 	}
 
-	err = r.writer.WriteMessages(ctx, kafka.Message{
+	return kafka.Message{
 		Key:   []byte(key),
 		Value: value,
-	})
-
-	return err
+	}, nil
 }
 
-func (r *AuctionRunner) updateCredits(ctx context.Context, allocations []models.Allocation, clearingPrice int) error {
-	// Group spend by customer: allocated_units * clearing_price
+func (r *AuctionRunner) updateAllCredits(ctx context.Context, results []portResult) error {
 	spendByCustomer := make(map[string]int)
-	for _, alloc := range allocations {
-		if alloc.CustomerID == "" {
-			continue
+	for _, res := range results {
+		for _, alloc := range res.allocations {
+			if alloc.CustomerID == "" {
+				continue
+			}
+			spendByCustomer[alloc.CustomerID] += int(alloc.AllocatedUnits) * res.clearingPrice
 		}
-		amount := int(alloc.AllocatedUnits) * clearingPrice
-		spendByCustomer[alloc.CustomerID] += amount
 	}
 	if len(spendByCustomer) == 0 {
 		return nil
@@ -247,18 +291,17 @@ func (r *AuctionRunner) valuationForCustomer(customerID string) int {
 	return 0
 }
 
-// updateUtility accumulates (valuation_per_unit - clearing_price) * allocated_units
-// per customer into the utility-map Atomix store. Values can be negative when
-// clearing_price > valuation (deliberate low-valuation experiments).
-func (r *AuctionRunner) updateUtility(ctx context.Context, allocations []models.Allocation, clearingPrice int) error {
+func (r *AuctionRunner) updateAllUtility(ctx context.Context, results []portResult) error {
 	utilityByCustomer := make(map[string]int)
-	for _, alloc := range allocations {
-		if alloc.CustomerID == "" {
-			continue
+	for _, res := range results {
+		for _, alloc := range res.allocations {
+			if alloc.CustomerID == "" {
+				continue
+			}
+			valuation := r.valuationForCustomer(alloc.CustomerID)
+			utility := (valuation - res.clearingPrice) * int(alloc.AllocatedUnits)
+			utilityByCustomer[alloc.CustomerID] += utility
 		}
-		valuation := r.valuationForCustomer(alloc.CustomerID)
-		utility := (valuation - clearingPrice) * int(alloc.AllocatedUnits)
-		utilityByCustomer[alloc.CustomerID] += utility
 	}
 	if len(utilityByCustomer) == 0 {
 		return nil
