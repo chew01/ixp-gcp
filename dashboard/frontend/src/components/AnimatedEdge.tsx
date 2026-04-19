@@ -6,11 +6,18 @@ import type { Packet } from "../types";
 export interface AnimatedEdgeData extends Record<string, unknown> {
   label?: string;
   packets?: Packet[];
+  /** Y-offset applied to source/target to separate bidirectional edge pairs. */
+  offset?: number;
+  /** Render arrowheads on both ends (single line, both directions). */
+  bidirectional?: boolean;
 }
 
 export type AnimatedEdgeType = Edge<AnimatedEdgeData, "animated">;
 
 const TRAVEL_DURATION_MS = 1200;
+
+// Arrowhead color matches the edge stroke.
+const ARROW_COLOR = "#8b949e";
 
 export const AnimatedEdge = memo(
   ({
@@ -23,12 +30,13 @@ export const AnimatedEdge = memo(
     targetPosition,
     data,
   }: EdgeProps<AnimatedEdgeType>) => {
+    const off = (data?.offset as number | undefined) ?? 0;
     const [edgePath, labelX, labelY] = getBezierPath({
       sourceX,
-      sourceY,
+      sourceY: sourceY + off,
       sourcePosition,
       targetX,
-      targetY,
+      targetY: targetY + off,
       targetPosition,
     });
 
@@ -36,11 +44,36 @@ export const AnimatedEdge = memo(
 
     return (
       <>
+        {/* Define arrowhead markers once per edge (browser deduplicates by ID). */}
+        <defs>
+          <marker
+            id="ixp-arrow"
+            markerWidth="8"
+            markerHeight="6"
+            refX="7"
+            refY="3"
+            orient="auto"
+          >
+            <polygon points="0 0, 8 3, 0 6" fill={ARROW_COLOR} />
+          </marker>
+          <marker
+            id="ixp-arrow-rev"
+            markerWidth="8"
+            markerHeight="6"
+            refX="7"
+            refY="3"
+            orient="auto-start-reverse"
+          >
+            <polygon points="0 0, 8 3, 0 6" fill={ARROW_COLOR} />
+          </marker>
+        </defs>
+
         <BaseEdge
           id={id}
           path={edgePath}
           style={{ stroke: "#30363d", strokeWidth: 1.5 }}
-          markerEnd="url(#arrowhead)"
+          markerEnd="url(#ixp-arrow)"
+          markerStart={data?.bidirectional ? "url(#ixp-arrow-rev)" : undefined}
         />
 
         {data?.label && (
@@ -92,26 +125,13 @@ function PacketDot({ path, packet }: PacketDotProps) {
     <g
       style={{
         offsetPath: `path("${path}")`,
-        offsetDistance: "0%",
-        animation: `travel ${TRAVEL_DURATION_MS}ms linear forwards`,
+        offsetDistance: packet.reversed ? "100%" : "0%",
+        animation: `${packet.reversed ? "travel-reverse" : "travel"} ${TRAVEL_DURATION_MS}ms linear forwards`,
         opacity,
         transition: "opacity 0.3s",
       }}
     >
       <circle r={5} fill={packet.color} />
-      <text
-        x={8}
-        y={4}
-        style={{
-          fill: packet.color,
-          fontSize: 8,
-          fontFamily: "'JetBrains Mono', monospace",
-          pointerEvents: "none",
-          userSelect: "none",
-        }}
-      >
-        {packet.label}
-      </text>
     </g>
   );
 }

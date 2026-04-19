@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 
 	"github.com/gorilla/websocket"
@@ -20,15 +23,42 @@ var upgrader = websocket.Upgrader{
 
 // Server wires together the stores, hub, and health reporters.
 type Server struct {
-	store          *DashboardStore
-	hub            *Hub
-	poller         *Poller
-	consumer       *AuctionConsumer // may be nil if Kafka is unavailable
-	kafkaBootstrap string
+	store             *DashboardStore
+	hub               *Hub
+	poller            *Poller
+	consumer          *AuctionConsumer // may be nil if Kafka is unavailable
+	kafkaBootstrap    string
+	resolvedBootstrap string
+	apiGatewayURL     string
 }
 
-func NewServer(store *DashboardStore, hub *Hub, poller *Poller, consumer *AuctionConsumer, kafkaBootstrap string) *Server {
-	return &Server{store: store, hub: hub, poller: poller, consumer: consumer, kafkaBootstrap: kafkaBootstrap}
+func NewServer(store *DashboardStore, hub *Hub, poller *Poller, consumer *AuctionConsumer, kafkaBootstrap, apiGatewayURL string) *Server {
+	return &Server{
+		store:             store,
+		hub:               hub,
+		poller:            poller,
+		consumer:          consumer,
+		kafkaBootstrap:    kafkaBootstrap,
+		resolvedBootstrap: resolveBootstrapIP(kafkaBootstrap),
+		apiGatewayURL:     apiGatewayURL,
+	}
+}
+
+// resolveBootstrapIP resolves the hostname in addr to its first IP address.
+// Returns addr unchanged if resolution fails or addr is already an IP.
+func resolveBootstrapIP(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	if net.ParseIP(host) != nil {
+		return addr // already an IP
+	}
+	ips, err := net.LookupHost(host)
+	if err != nil || len(ips) == 0 {
+		return addr
+	}
+	return net.JoinHostPort(ips[0], port)
 }
 
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
@@ -39,6 +69,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/flows", s.adminFlows)
 	mux.HandleFunc("/admin/bids", s.adminBids)
 	mux.HandleFunc("/admin/health", s.adminHealth)
+	mux.HandleFunc("/admin/bid", s.adminBidProxy)
 
 	// WebSocket endpoint.
 	mux.HandleFunc("/ws", s.handleWS)
@@ -167,10 +198,60 @@ func (s *Server) adminHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"atomix":          atomixOK,
 		"kafka":           kafkaOK,
-		"kafka_bootstrap": s.kafkaBootstrap,
+		"kafka_bootstrap": s.resolvedBootstrap,
 		"kafka_brokers":   brokers,
 		"atomix_maps":     s.store.MapNames(),
 	})
+}
+
+func (s *Server) adminBidProxy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		CustomerID  string  `json:"customer_id"`
+		IngressPort *uint64 `json:"ingress_port"`
+		EgressPort  *uint64 `json:"egress_port"`
+		Units       *uint64 `json:"units"`
+		UnitPrice   *int    `json:"unit_price"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.CustomerID == "" {
+		http.Error(w, "customer_id required", http.StatusBadRequest)
+		return
+	}
+
+	fwdPayload := map[string]any{
+		"ingress_port": req.IngressPort,
+		"egress_port":  req.EgressPort,
+		"units":        req.Units,
+		"unit_price":   req.UnitPrice,
+	}
+	body, _ := json.Marshal(fwdPayload)
+
+	fwdReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, s.apiGatewayURL+"/bids", bytes.NewReader(body))
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	fwdReq.Header.Set("Content-Type", "application/json")
+	fwdReq.Header.Set("X-Customer-ID", req.CustomerID)
+
+	resp, err := http.DefaultClient.Do(fwdReq)
+	if err != nil {
+		http.Error(w, "api gateway unreachable: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	w.WriteHeader(resp.StatusCode)
+	w.Write(respBody)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

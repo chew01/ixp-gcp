@@ -37,6 +37,7 @@ api/api
 auction/auction
 dummy/dummy
 telemetry/telemetry
+dashboard/dashboard
 
 dashboard/frontend/dist
 dashboard/frontend/node_modules

@@ -82,7 +82,6 @@ func (p *Poller) pollBids(ctx context.Context) {
 			for ingressKey, entry := range current {
 				prevEntry, existed := prev[ingressKey]
 				if !existed || prevEntry.Units != entry.Units || prevEntry.UnitPrice != entry.UnitPrice {
-					// Emit bid event.
 					payload := BidPayload{
 						CustomerID:  entry.CustomerID,
 						EgressPort:  ep,
@@ -91,6 +90,37 @@ func (p *Poller) pollBids(ctx context.Context) {
 						UnitPrice:   entry.UnitPrice,
 						Timestamp:   time.Now(),
 					}
+
+					// GET /flows sequence: api reads atomix, atomix returns,
+					// then api responds to customer — each step after the previous dot lands.
+					if ev, err := newEvent("atomix_rw",
+						"api-gateway",
+						"atomix",
+						AtomixRWPayload{Op: "read", Map: "throughput-map"},
+					); err == nil {
+						p.hub.Broadcast(ev)
+					}
+					cid := entry.CustomerID
+					go func() {
+						time.Sleep(1300 * time.Millisecond)
+						if ev, err := newEvent("atomix_rw",
+							"atomix",
+							"api-gateway",
+							AtomixRWPayload{Op: "read", Map: "throughput-map"},
+						); err == nil {
+							p.hub.Broadcast(ev)
+						}
+						time.Sleep(1300 * time.Millisecond)
+						if ev, err := newEvent("flow_query",
+							"api-gateway",
+							"agent:"+cid,
+							map[string]string{"customer_id": cid},
+						); err == nil {
+							p.hub.Broadcast(ev)
+						}
+					}()
+
+					// POST /bids: customer → api immediately, api → atomix write after dot lands.
 					if ev, err := newEvent("bid",
 						"agent:"+entry.CustomerID,
 						"api-gateway",
@@ -98,24 +128,17 @@ func (p *Poller) pollBids(ctx context.Context) {
 					); err == nil {
 						p.hub.Broadcast(ev)
 					}
-
-					// Companion flow_query event (agents always query flows before bidding).
-					if ev, err := newEvent("flow_query",
-						"agent:"+entry.CustomerID,
-						"api-gateway",
-						map[string]string{"customer_id": entry.CustomerID},
-					); err == nil {
-						p.hub.Broadcast(ev)
-					}
-
-					// API Gateway writes the bid to Atomix.
-					if ev, err := newEvent("atomix_rw",
-						"api-gateway",
-						"atomix",
-						AtomixRWPayload{Op: "write", Map: "bids-" + ingressKey},
-					); err == nil {
-						p.hub.Broadcast(ev)
-					}
+					ik := ingressKey
+					go func() {
+						time.Sleep(1300 * time.Millisecond)
+						if ev, err := newEvent("atomix_rw",
+							"api-gateway",
+							"atomix",
+							AtomixRWPayload{Op: "write", Map: "bids-" + ik},
+						); err == nil {
+							p.hub.Broadcast(ev)
+						}
+					}()
 				}
 			}
 			p.prevBids[ep] = current
@@ -134,28 +157,31 @@ func (p *Poller) pollFlows(ctx context.Context) {
 	}
 	p.atomixHealthy.Store(1)
 
+	flowChanged := false
 	for k, v := range current {
-		prev, ok := p.prevFlows[k]
-		if !ok || prev != v {
-			// Telemetry service wrote updated metrics to Atomix.
-			if ev, err := newEvent("atomix_rw",
-				"telemetry-service",
-				"atomix",
-				AtomixRWPayload{Op: "write", Map: "throughput-map"},
-			); err == nil {
-				p.hub.Broadcast(ev)
-			}
+		if prev, ok := p.prevFlows[k]; !ok || prev != v {
+			flowChanged = true
+			break
 		}
 	}
 	p.prevFlows = current
 
-	// Always broadcast a telemetry snapshot on every poll tick. The UI and
-	// WebSocket stream otherwise only receive "pods" from K8s when the
-	// throughput map is empty and unchanged — Atomix-driven events would never
-	// appear even though the poller is healthy.
-	if ev, err := newEvent("telemetry", "telemetry-service", "atomix",
+	// Always show kafka → telemetry-service dot; the payload also drives the chart.
+	if ev, err := newEvent("telemetry", "kafka", "telemetry-service",
 		TelemetryPayload{Flows: current},
 	); err == nil {
 		p.hub.Broadcast(ev)
+	}
+
+	// When data changed, show telemetry-service → atomix write after the kafka dot lands.
+	if flowChanged {
+		go func() {
+			time.Sleep(1300 * time.Millisecond)
+			if ev, err := newEvent("atomix_rw", "telemetry-service", "atomix",
+				AtomixRWPayload{Op: "write", Map: "throughput-map"},
+			); err == nil {
+				p.hub.Broadcast(ev)
+			}
+		}()
 	}
 }

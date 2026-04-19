@@ -157,7 +157,7 @@ export const EventFeed = memo(({ entries }: EventFeedProps) => {
             >
               {entry.time}
             </span>
-            <span style={{ color: entry.color, fontSize: 13, wordBreak: "break-word" }}>
+            <span style={{ color: entry.color, fontSize: 13, wordBreak: "break-word", whiteSpace: "pre-wrap" }}>
               {entry.text}
             </span>
           </div>

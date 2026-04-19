@@ -140,4 +140,6 @@ export interface Packet {
   label: string;
   color: string;
   createdAt: number;
+  /** When true the packet travels from target→source (reverse along a bidirectional edge). */
+  reversed?: boolean;
 }

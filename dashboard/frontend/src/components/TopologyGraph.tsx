@@ -66,15 +66,19 @@ function buildGraph(scenario: Scenario): {
       id: `agent:${cid}--api-gateway--POST /bids`,
       type: "animated" as const,
       source: `agent:${cid}`,
+      sourceHandle: "right-out",
       target: "api-gateway",
-      data: { label: "POST /bids", packets: [] },
+      targetHandle: "left-in",
+      data: { label: "POST /bids", packets: [], offset: -12 },
     });
     edges.push({
-      id: `agent:${cid}--api-gateway--GET /flows`,
+      id: `api-gateway--agent:${cid}--GET /flows`,
       type: "animated" as const,
-      source: `agent:${cid}`,
-      target: "api-gateway",
-      data: { label: "GET /flows", packets: [] },
+      source: "api-gateway",
+      sourceHandle: "left-out",
+      target: `agent:${cid}`,
+      targetHandle: "right-in",
+      data: { label: "GET /flows", packets: [], offset: 12 },
     });
   });
 
@@ -89,8 +93,10 @@ function buildGraph(scenario: Scenario): {
     id: "api-gateway--atomix--read/write",
     type: "animated" as const,
     source: "api-gateway",
+    sourceHandle: "right-out",
     target: "atomix",
-    data: { label: "read/write", packets: [] },
+    targetHandle: "left-in",
+    data: { label: "read/write", packets: [], bidirectional: true },
   });
 
   nodes.push({
@@ -100,18 +106,29 @@ function buildGraph(scenario: Scenario): {
     data: { label: "Auction Runner", role: "auction-runner", status: "unknown" } as ServiceNodeData,
   });
   edges.push({
-    id: "auction-runner--atomix--read/write",
+    id: "auction-runner--atomix--write",
     type: "animated" as const,
     source: "auction-runner",
+    sourceHandle: "right-out",
     target: "atomix",
-    data: { label: "read/write", packets: [] },
+    targetHandle: "left-in",
+    data: { label: "write auction result", packets: [], offset: -12 },
+  });
+  edges.push({
+    id: "atomix--auction-runner--read",
+    type: "animated" as const,
+    source: "atomix",
+    sourceHandle: "left-out",
+    target: "auction-runner",
+    targetHandle: "right-in",
+    data: { label: "read bids", packets: [], offset: 12 },
   });
   edges.push({
     id: "auction-runner--kafka--auction-results",
     type: "animated" as const,
     source: "auction-runner",
     target: "kafka",
-    data: { label: "auction-results", packets: [] },
+    data: { label: "produce auction-results", packets: [] },
   });
 
   nodes.push({
@@ -132,21 +149,32 @@ function buildGraph(scenario: Scenario): {
     type: "animated" as const,
     source: "kafka",
     target: "telemetry-service",
-    data: { label: "consume", packets: [] },
+    data: { label: "consume switch-telemetry", packets: [] },
   });
 
   nodes.push({
     id: "dummy-producer",
     type: "service" as const,
     position: { x: X_DUMMY, y: Y_BOT },
-    data: { label: "Dummy Producer", role: "dummy", status: "unknown" } as ServiceNodeData,
+    data: { label: "Switch", role: "dummy", status: "unknown" } as ServiceNodeData,
   });
   edges.push({
-    id: "dummy-producer--kafka--telemetry",
+    id: "dummy-producer--kafka--produce",
     type: "animated" as const,
     source: "dummy-producer",
+    sourceHandle: "right-out",
     target: "kafka",
-    data: { label: "switch-telemetry", packets: [] },
+    targetHandle: "left-in",
+    data: { label: "produce switch-telemetry", packets: [], offset: -12 },
+  });
+  edges.push({
+    id: "kafka--dummy-producer--auction-results",
+    type: "animated" as const,
+    source: "kafka",
+    sourceHandle: "left-out",
+    target: "dummy-producer",
+    targetHandle: "right-in",
+    data: { label: "consume auction-results", packets: [], offset: 12 },
   });
 
   nodes.push({
@@ -222,6 +250,7 @@ export function TopologyGraph({
       prev.map((node) => {
         const nd = node.data as ServiceNodeData;
         const workloadName = workloadForNode(node.id);
+        if (!workloadName) return node;
         const info = pods[workloadName];
         if (!info) return node;
         const status =
@@ -283,7 +312,7 @@ export function TopologyGraph({
     setEdges((prev) =>
       prev.map((edge) => {
         const matchForward = edge.source === from && edge.target === to;
-        const matchReverse = edge.source === to && edge.target === from;
+        const matchReverse = !!edge.data?.bidirectional && edge.source === to && edge.target === from;
         if (!matchForward && !matchReverse) return edge;
 
         const pkt: Packet = {
@@ -292,6 +321,7 @@ export function TopologyGraph({
           label,
           color,
           createdAt: Date.now(),
+          reversed: matchReverse,
         };
         const existing = (edge.data?.packets as Packet[]) ?? [];
         return { ...edge, data: { ...edge.data, packets: [...existing, pkt] } };
@@ -342,6 +372,10 @@ export function TopologyGraph({
         @keyframes travel {
           from { offset-distance: 0%; }
           to   { offset-distance: 100%; }
+        }
+        @keyframes travel-reverse {
+          from { offset-distance: 100%; }
+          to   { offset-distance: 0%; }
         }
       `}</style>
 
@@ -402,10 +436,10 @@ function workloadForNode(nodeId: string): string {
     "api-gateway": "api-gateway",
     "auction-runner": "auction-runner",
     "telemetry-service": "telemetry-service",
-    "dummy-producer": "dummy-producer",
     atomix: "consensus-store",
+    // dummy-producer (Switch) intentionally omitted — no pod count shown
   };
-  return map[nodeId] ?? nodeId;
+  return map[nodeId] ?? "";
 }
 
 function packetLabel(type: string, payload: unknown): string {

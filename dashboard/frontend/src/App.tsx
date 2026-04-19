@@ -6,6 +6,7 @@ import { TopologyGraph } from "./components/TopologyGraph";
 import { EventFeed } from "./components/EventFeed";
 import { TelemetryChart } from "./components/TelemetryChart";
 import { CreditsChart } from "./components/CreditsChart";
+import { BidPanel } from "./components/BidPanel";
 import type { TelemetryPoint } from "./components/TelemetryChart";
 import type { CreditsEntry } from "./components/CreditsChart";
 
@@ -166,7 +167,7 @@ export default function App() {
 
       const allocLines = (p.allocations ?? []).map(
         (a, i, arr) =>
-          `${i === arr.length - 1 ? "└" : "├"} ${a.customer_id.padEnd(14)} ${a.units} kbps`
+          `${i === arr.length - 1 ? "└" : "├"} ingress ${String(a.ingress_port).padEnd(6)} ${a.units} kbps`
       );
 
       toast(
@@ -202,10 +203,14 @@ export default function App() {
         }
       );
 
-      const allocSummary = (p.allocations ?? [])
-        .map((a) => `${a.customer_id}: ${a.units} kbps`)
-        .join(" | ");
-      const feedText = `Egress ${p.egress_port} cleared @ ${p.clearing_price}/unit${allocSummary ? ` — ${allocSummary}` : ""}`;
+      const feedAllocLines = (p.allocations ?? []).map(
+        (a, i, arr) =>
+          `${i === arr.length - 1 ? "└" : "├"} ingress ${String(a.ingress_port).padEnd(6)} ${a.units} kbps`
+      );
+      const feedHeader = `Egress ${p.egress_port} cleared @ ${p.clearing_price}/unit`;
+      const feedText = feedAllocLines.length > 0
+        ? `${feedHeader}\n${feedAllocLines.join("\n")}`
+        : feedHeader;
 
       pushFeed({
         time: formatTime(new Date()),
@@ -371,7 +376,7 @@ export default function App() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "1fr 1fr",
+          gridTemplateColumns: "1fr 1fr minmax(320px, 380px)",
           height: 220,
           borderTop: "1px solid #30363d",
           background: "#161b22",
@@ -380,8 +385,11 @@ export default function App() {
         <div style={{ borderRight: "1px solid #30363d", overflow: "hidden" }}>
           <TelemetryChart data={telemetryHistory} flowKeys={activeChartKeys} />
         </div>
-        <div style={{ overflow: "hidden" }}>
+        <div style={{ borderRight: "1px solid #30363d", overflow: "hidden" }}>
           <CreditsChart data={credits} />
+        </div>
+        <div style={{ overflow: "hidden" }}>
+          <BidPanel scenario={scenario} />
         </div>
       </div>
     </div>

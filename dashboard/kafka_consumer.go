@@ -120,37 +120,36 @@ func (c *AuctionConsumer) handle(ctx context.Context, msg kafka.Message) {
 
 	egressPort := uint64(flow.GetEgressPort())
 
-	// Emit auction-runner → Kafka animation.
-	if ev, err := newEvent("auction", "auction-runner", "kafka", map[string]any{
-		"bandwidth_kbps": result.GetBandwidthKbps(),
-		"egress_port":    egressPort,
-	}); err == nil {
-		c.hub.Broadcast(ev)
-	}
-
-	// Emit auction-runner → Atomix (history write) animation.
-	if ev, err := newEvent("atomix_rw", "auction-runner", "atomix",
-		AtomixRWPayload{Op: "write", Map: "auction-history"},
+	// Emit atomix → auction-runner (read bids) first; write and produce fire after the dot lands.
+	if ev, err := newEvent("atomix_rw", "atomix", "auction-runner",
+		AtomixRWPayload{Op: "read", Map: "bids"},
 	); err == nil {
 		c.hub.Broadcast(ev)
 	}
 
-	// Fetch the latest full AuctionHistoryRecord for a richer popup.
-	rec, err := c.store.LatestAuction(ctx, egressPort)
-	if err != nil || rec == nil {
-		// Fall back to a minimal record derived from the proto message.
-		rec = &shared.AuctionHistoryRecord{
-			EgressPort: egressPort,
-		}
-	}
+	bwKbps := result.GetBandwidthKbps()
+	ep := egressPort
+	go func() {
+		time.Sleep(1300 * time.Millisecond)
 
-	payload := AuctionPayload{
-		AuctionHistoryRecord: *rec,
-		Timestamp:            time.Now(),
-	}
-	if ev, err := newEvent("auction_detail", "auction-runner", "atomix", payload); err == nil {
-		c.hub.Broadcast(ev)
-	}
+		// Auction result produced to Kafka.
+		if ev, err := newEvent("auction", "auction-runner", "kafka", map[string]any{
+			"bandwidth_kbps": bwKbps,
+			"egress_port":    ep,
+		}); err == nil {
+			c.hub.Broadcast(ev)
+		}
+
+		// Fetch the latest full AuctionHistoryRecord for a richer popup.
+		rec, err := c.store.LatestAuction(ctx, ep)
+		if err != nil || rec == nil {
+			rec = &shared.AuctionHistoryRecord{EgressPort: ep}
+		}
+		payload := AuctionPayload{AuctionHistoryRecord: *rec, Timestamp: time.Now()}
+		if ev, err := newEvent("auction_detail", "auction-runner", "atomix", payload); err == nil {
+			c.hub.Broadcast(ev)
+		}
+	}()
 }
 
 // buildDialer returns a TLS-configured Kafka dialer when TLS env vars are set.

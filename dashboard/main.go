@@ -16,6 +16,7 @@ func main() {
 	scenarioPath := getenv("SCENARIO_PATH", "/etc/scenario/scenario.yaml")
 	addr := getenv("ADDR", ":8082")
 	namespace := getenv("NAMESPACE", "default")
+	apiGatewayURL := getenv("API_GATEWAY_URL", "http://api-gateway:80")
 
 	// Load scenario for port topology and customer list.
 	scen, err := scenario.Load(scenarioPath)
@@ -55,7 +56,7 @@ func main() {
 	}
 
 	// HTTP server.
-	srv := NewServer(store, hub, poller, consumer, kafkaBootstrap)
+	srv := NewServer(store, hub, poller, consumer, kafkaBootstrap, apiGatewayURL)
 	mux := http.NewServeMux()
 	srv.RegisterRoutes(mux)
 
