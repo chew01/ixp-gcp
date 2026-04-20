@@ -12,6 +12,8 @@ First, system health metrics are not comprehensively monitored at the cluster le
 
 Second, the current architecture places the OpenTelemetry Collector in a centralized role, which introduces a single point of failure for telemetry ingestion. If the collector becomes unavailable, metric export continuity is disrupted and observability quality degrades significantly.
 
+The OpenTelemetry guidance on collector scaling and bottleneck identification supports this concern, because a centralized collector can become the limiting component once telemetry volume increases beyond a small deployment footprint \cite{opentelemetryCollectorScaling}.
+
 \subsection{Future Directions}
 
 A practical next step is to strengthen telemetry resilience by moving from a purely centralized collector model toward per-service sidecar collectors. Deploying an OpenTelemetry Collector sidecar alongside each service can reduce reliance on a single shared collector instance and improve fault isolation in the telemetry path.

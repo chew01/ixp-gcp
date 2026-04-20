@@ -1,52 +1,28 @@
 flowchart LR
-  subgraph ControlPlane["Global Control Plane Services"]
-    AG[API Gateway]
-    AR[Auction Runner]
-    TP[Telemetry Processor]
-    AT[(Atomix Shared State)]
-    KF[(Kafka Broker)]
-  end
-
-  subgraph AppTelemetry["Service Instrumentation"]
-    AG_OTel[API Gateway OTel SDK]
-    AR_OTel[Auction Runner OTel SDK]
-    TP_OTel[Telemetry Processor OTel SDK]
+  subgraph Systems["Microservices"]
+    subgraph AS["Auction System"]
+      AS_SDK["OTel SDK"]
+    end
+    subgraph TS["Telemetry System"]
+      TS_SDK["OTel SDK"]
+    end
   end
 
   subgraph Observability["Observability Backend"]
     Collector[OpenTelemetry Collector]
     Prom[Prometheus]
-    Rules[Prometheus Rules]
-    Alert[Alertmanager]
-    TG[Telegram]
     Jaeger[Jaeger]
     Loki[Loki]
     Grafana[Grafana]
   end
 
-  AG -->|read flows| AT
-  AG -->|write bids, credits| AT
-  AR -->|read bids| AT
-  AR -->|write credits, utility| AT
-  TP -->|write flow metrics| AT
-  TP -->|consume telemetry| KF
-  AR -->|publish results| KF
-
-  AG --> AG_OTel
-  AR --> AR_OTel
-  TP --> TP_OTel
-
-  AG_OTel --> Collector
-  AR_OTel --> Collector
-  TP_OTel --> Collector
+  AS_SDK -->|metrics, traces, logs| Collector
+  TS_SDK -->|metrics, traces, logs| Collector
 
   Collector -->|metrics| Prom
   Collector -->|traces| Jaeger
   Collector -->|logs| Loki
 
-  Prom --> Rules
-  Rules --> Alert
   Prom --> Grafana
-  Alert --> TG
   Jaeger --> Grafana
   Loki --> Grafana

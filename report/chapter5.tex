@@ -8,7 +8,7 @@ Implementation scope mirrors Chapter 3 boundaries: API Gateway, Auction Runner, 
 
 \subsection{Go Microservice Instrumentation}
 
-The instrumentation is implemented in a shared bootstrap layer and then consumed consistently by each service entry point. Instead of duplicating setup logic per service, the code uses \texttt{shared/otel/otel.go} and \texttt{shared/otel/otel-init.go} as the common initialization path.
+The instrumentation is implemented in a shared bootstrap layer and then consumed consistently by each service entry point. Instead of duplicating setup logic per service, the code uses \texttt{shared/otel/otel.go} and \texttt{shared/otel/otel-init.go} as the common initialization path, aligned with the OpenTelemetry Go instrumentation guidance at \url{https://opentelemetry.io/docs/languages/go/instrumentation/} \cite{opentelemetryGoInstrumentation} and informed by the OpenTelemetry demo patterns at \url{https://opentelemetry.io/docs/demo/} \cite{opentelemetryDemo}.
 
 \subsubsection{Shared OpenTelemetry Bootstrap (\texttt{otel.go})}
 
@@ -134,6 +134,10 @@ The collector receives OTLP data from the Go services and exports it to the appr
     \item Logs are exported to Loki for event correlation.
 \end{itemize}
 
+The collector configuration follows the standard OpenTelemetry Collector configuration schema documented at \url{https://opentelemetry.io/docs/collector/configuration/#location} \cite{opentelemetryCollectorConfigurationLocation}.
+
+For Kubernetes deployment guidance, the OpenTelemetry Collector install documentation was also referenced at \url{https://opentelemetry.io/docs/collector/install/kubernetes/} \cite{opentelemetryCollectorKubernetesInstall}; however, this implementation uses Helm values in \texttt{helm/opentelemetry-collector/values.yaml} rather than the Operator-based install path.
+
 In deployment, the collector routing is defined in \texttt{helm/opentelemetry-collector/values.yaml}. The essential pipeline configuration is shown below:
 
 \begin{minted}[fontsize=\small,breaklines]{yaml}
@@ -181,7 +185,7 @@ This explicit receiver-processor-exporter structure is important for reproducibi
 
 \subsubsection{Prometheus ServiceMonitors and PromQL Alert Rules}
 
-Prometheus scrapes the collector and evaluates the alert rules defined for API availability, Atomix dependency health, latency congestion, and telemetry continuity. The rules are organized by service and failure semantics rather than by low-level metric origin.
+Prometheus scrapes the collector and evaluates the alert rules aligned with the two in-scope evaluation scenarios: Atomix dependency degradation and API bid-flood pressure. The rules are organized by failure semantics rather than by low-level metric origin.
 
 The concrete alert definitions are stored in \texttt{observability/alerts-ixp.yaml} as a \texttt{PrometheusRule} resource. Alert routing, grouping, inhibition, and Telegram delivery configuration are stored in \texttt{observability/values.yaml} under the \texttt{alertmanager.config} section. During deployment, these two files are applied through:
 
@@ -197,14 +201,6 @@ This file-level mapping makes the firing path explicit: Prometheus evaluates rul
 
 Representative alert rules from \texttt{observability/alerts-ixp.yaml} are shown below.
 
-\textbf{Replica availability mismatch (Kubernetes availability signal):}
-\begin{minted}[fontsize=\small,breaklines]{yaml}
-- alert: IXPApiGatewayUnavailable
-  expr: kube_deployment_status_replicas_available{namespace="default",deployment="api-gateway"}
-        < kube_deployment_spec_replicas{namespace="default",deployment="api-gateway"}
-  for: 15s
-\end{minted}
-
 \textbf{Atomix dependency-chain failure (application dependency signal):}
 \begin{minted}[fontsize=\small,breaklines]{yaml}
 - alert: IXPAtomixOperationFailuresCritical
@@ -212,32 +208,31 @@ Representative alert rules from \texttt{observability/alerts-ixp.yaml} are shown
   for: 5s
 \end{minted}
 
-\textbf{Telemetry Kafka pipeline degradation (data pipeline signal):}
+\textbf{Bid-flood detection on API ingress (traffic pressure signal):}
 \begin{minted}[fontsize=\small,breaklines]{yaml}
-- alert: IXPTelemetryKafkaConsumerErrors
-  expr: sum(increase(ixp_telemetry_kafka_consumer_errors_total[5m])) > 10
-  for: 2m
+- alert: IXPAPIGatewayBidRateHigh
+  expr: sum(rate(ixp_bid_submitted_total[1m])) > 8.33
+  for: 5s
 \end{minted}
 
-Together, these examples show the layered rule strategy used in this project: platform availability, control-plane dependency health, and pipeline continuity.
+Together, these examples show the scenario-aligned rule strategy used in this project: dependency-chain failure detection and bid-ingress congestion/flood detection.
 
 This organization makes the alerting logic easier to read and easier to map back to operators' mental model of the system:
 
 \begin{itemize}
-    \item API Gateway alerts track request failures and Atomix access failures.
-    \item Auction Runner alerts track auction progress and downstream dependency issues.
-    \item Telemetry Processor alerts track Kafka consumption and Atomix write behavior.
+    \item Atomix degradation alerts track dependency-chain breakage affecting control-plane operations.
+    \item Bid-flood alerts track abnormal ingress pressure at the API bid path.
 \end{itemize}
 
 The PromQL expressions are intentionally kept simple enough to be explained in the thesis while remaining expressive enough to detect soft failures before complete service breakdown.
 
 \subsubsection{Telegram Bot Integration Setup}
 
-Telegram routing is configured directly in the Helm values file used to deploy \texttt{kube-prometheus-stack}. In this project, the relevant configuration is stored under \texttt{observability/values.yaml} in the \texttt{alertmanager} section.
+Telegram routing is configured directly in the Helm values file used to deploy \texttt{kube-prometheus-stack}. In this project, the relevant configuration is stored under \texttt{observability/values.yaml} in the \texttt{alertmanager} section, following the Telegram receiver configuration model documented at \url{https://prometheus.io/docs/alerting/latest/configuration/#telegram_config} \cite{prometheusAlertmanagerDocumentation}.
 
 The following excerpt shows how the receiver and routing rules are defined:
 
-\begin{minted}[fontsize=\small,breaklines]{yaml}
+\begin{minted}[fontsize=\small,breaklines,breakanywhere]{yaml}
 alertmanager:
   alertmanagerSpec:
     secrets:
@@ -273,9 +268,9 @@ alertmanager:
         target_matchers: ["severity = warning"]
         equal: ["component"]
       - source_matchers:
-          - 'alertname =~ "IXPAtomix(OperationFailuresCritical|NearTotalFailure|CriticalFailureRate|TotalFailureImminent)"'
+          - 'alertname =~ "IXPAtomix(OperationFailuresCritical|NearTotalFailure)"'
         target_matchers:
-          - 'alertname =~ "IXPTelemetryLowFlowConsumption|IXPAuctionNoBidsAcrossIntervals|IXPAPIGatewayHighErrorRateWarning|IXPAPIGatewaySuccessRateLow"'
+          - 'alertname =~ "IXPAPIGatewayBidCongestion|IXPAPIGatewayBidHighLatencyCritical"'
         equal: []
 \end{minted}
 
@@ -308,7 +303,7 @@ This integration serves two purposes: validating end-to-end alert propagation th
 
 \subsection{Deployment Configuration (Kubernetes Manifests and Helm)}
 
-The observability components are deployed alongside the application services using Kubernetes manifests and Helm values. This includes the OpenTelemetry Collector, Prometheus, Alertmanager, and the supporting monitoring resources required for scraping and rule evaluation.
+The observability components are deployed alongside the application services using Kubernetes manifests and Helm values. This includes the OpenTelemetry Collector, Prometheus, Alertmanager, and the supporting monitoring resources required for scraping and rule evaluation. The collector installation reference above is useful context, but the project does not use the OpenTelemetry Operator.
 
 The deployment is structured so that the observability stack can be updated independently of the application services when metric names or alert rules change. That separation is important because the thesis implementation iterated on alert definitions several times as the failure scenarios were refined. In the context of this chapter, the important point is simply that the collector, alert rules, and notification path are deployed as first-class observability infrastructure rather than being embedded into the application manifests.
 
