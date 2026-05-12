@@ -15,6 +15,10 @@ spec:
         app: auction-runner
         proxy.atomix.io/inject: "true"
         proxy.atomix.io/profile: "ixp-storage-profile"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: auction-runner
@@ -26,6 +30,8 @@ spec:
             value: auction-runner
           - name: OTEL_EXPORTER_OTLP_ENDPOINT
             value: "otel-collector-opentelemetry-collector.observability.svc.cluster.local:4317"
+          - name: TELEMETRY_MODE
+            value: "collector"
         volumeMounts:
           - name: scenario-volume
             mountPath: "/etc/scenario"

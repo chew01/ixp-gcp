@@ -1,0 +1,64 @@
+%%
+% BIThesis Undergraduate Thesis Template (English) — Compile with XeLaTeX
+% Chapter 4: Observability Framework Design
+%%
+
+\chapter{Observability Framework Design}
+\label{chap:observability}
+
+This chapter presents the observability framework designed to expose logical failures within the asynchronous SDN control plane. Rather than relying on generic infrastructure metrics (which fail to capture decoupled architectural bottlenecks), this framework directly instruments the business logic and service dependencies. A major technical contribution of this chapter is the implementation of a custom trace-context propagation strategy that preserves request visibility across the Atomix consensus database.
+
+\section{Design Principles}
+
+The observability framework follows three core design principles that guide the implementation choices throughout the microservice environment.
+
+\begin{enumerate}
+    \item \textbf{Business-Level Visibility:} Instrumentation must expose control-plane decision outcomes, not just container health. Metrics include auction execution latency, clearing prices, and bandwidth allocations. This ensures operators monitor the actual economic network shaping, rather than just CPU utilization.
+    \item \textbf{Low Operational Coupling:} Observability infrastructure must fail independently of request-critical code paths. If a tracing backend crashes, it must not cascade and block the Auction Runner from computing bandwidth allocations.
+    \item \textbf{Actionable Signal Correlation:} Metrics detect anomalies, traces localize the bottleneck, and structured logs verify the root cause. These signals must share common identifying attributes (e.g., \texttt{EgressPort}, \texttt{IntervalID}) to allow operators to pivot seamlessly between tools during an incident.
+\end{enumerate}
+
+\section{The Unified Telemetry Pipeline}
+
+To achieve these principles without vendor lock-in, the system utilizes the open-source OpenTelemetry (OTel) framework \cite{opentelemetryDocsOverview, youngLearningOpenTelemetry2023}. The Go microservices are instrumented with the OTel SDKs \cite{opentelemetryGoInstrumentation}, pushing telemetry data to a centralized OpenTelemetry Collector \cite{opentelemetryCollectorKubernetesInstall} deployed within the Kubernetes cluster.
+
+\subsection{Metrics (Prometheus)}
+Metrics provide real-time aggregation of system state \cite{opentelemetryDocsMetricsBestPractices} and are used to trigger alerts. The API Gateway exposes HTTP throughput and error rates, while the Auction Runner exposes the uniform-price auction durations and the final clearing prices. These time-series metrics are scraped by Prometheus and visualized in Grafana dashboards \cite{prometheusAlertmanagerDocumentation}, establishing the baseline health of the SDN marketplace.
+
+\subsection{Structured Logs (Loki)}
+Traditional unstructured text logs are notoriously difficult to query in distributed systems. The framework mandates structured JSON logging. Every log emitted by the Go services is enriched with contextual attributes (such as \texttt{CustomerID} or \texttt{TraceID}) and forwarded to Grafana Loki. This transforms generic error strings into highly indexable, queryable events.
+
+\subsection{Distributed Tracing (Jaeger)}
+\label{}
+Distributed tracing \cite{sigelman2010dapper, jangJaegerOpenSourceDistributed2020} reconstructs the causal chain of a request as it travels across the network. By generating a unique W3C \texttt{TraceID} \cite{w3cTraceContext} at the API Gateway, the system attempts to track the entire lifecycle of a bandwidth bid. This data is exported to Jaeger for visualization. However, because the control plane uses an asynchronous database-mediated architecture, standard HTTP trace propagation is insufficient.
+
+\section{Asynchronous Trace Context Propagation}
+\label{sec:async_trace_context}
+
+A fundamental limitation of standard distributed tracing is its reliance on synchronous HTTP/gRPC headers to pass the \texttt{TraceID} from one service to another. In this architecture, the API Gateway and the Auction Runner never communicate directly. The Gateway writes a bid to Atomix, and the Runner reads it from Atomix up to 60 seconds later. Standard tracing completely loses the context at the database boundary.
+
+To solve this, the framework implements a custom database-carrier pattern to bridge the asynchronous gap.
+
+\subsection{Context Injection in the Gateway}
+When a customer submits a bid, the API Gateway initiates an OpenTelemetry root trace. Before marshaling the bid payload to be saved into the Atomix consensus store, the Gateway's Go handler explicitly extracts the current W3C \texttt{TraceID} and \texttt{SpanID} \cite{opentelemetryDocsContextPropagation} from the active context. It injects these exact values as string fields directly into the \texttt{Bid} data structure. Consequently, the Atomix database record itself acts as the trace context carrier.
+
+\subsection{Context Extraction and Linking in the Runner}
+When the Auction Runner wakes up to process an interval, it initiates a completely new root trace for the batch job. As it iterates through the bids pulled from Atomix, it extracts the stored \texttt{TraceID} and \texttt{SpanID} strings from the retrieved payloads.
+
+Instead of trying to force the runner's execution to become a "child" of a 60-second-old HTTP request, the runner uses the OpenTelemetry Go SDK to create a \texttt{Link}. This explicit linking explicitly connects the runner's current execution span with the API Gateway's original bid submission span. This programmatic reconstruction successfully bridges the asynchronous boundary, proving that a specific auction batch job successfully cleared a specific customer's HTTP request.
+
+\section{Telemetry Data Reduction Strategy}
+
+Instrumenting every function across a high-throughput control plane generates a massive volume of telemetry data, potentially consuming more network bandwidth and storage than the control plane itself. The OpenTelemetry Collector mitigates this through advanced data reduction strategies.
+
+\subsection{Tail-Based Trace Sampling}
+Instead of sampling traces randomly at the edge (Head-Based Sampling), the framework implements Tail-Based Sampling \cite{chaiTraceCollectionOptimization2021} at the Collector. The Collector buffers all trace spans in memory until the transaction completes. If the trace contains an error, a timeout, or an abnormally high latency, 100\% of the trace is retained and exported to Jaeger. If the trace is fast and successful, it is aggressively down-sampled (e.g., keeping only 5\% of healthy traces). This guarantees that operators never miss a failing transaction while drastically reducing storage overhead \cite{opentelemetryCollectorScaling}.
+
+\subsection{Severity-Based Log Filtering}
+Similarly, the Collector \cite{opentelemetryCollectorConfigurationLocation} acts as a filter for structured logs. Debug and Info-level logs are dropped at the edge during normal operation, while Warning and Error-level logs are prioritized and shipped to Loki \cite{bressoudDistributedSystemsMonitoring2018}. 
+
+\section{Summary}
+
+This chapter detailed the design and implementation of the control plane's observability framework. By leveraging OpenTelemetry, the architecture successfully integrates metrics, structured logs, and distributed traces without tightly coupling to specific vendors. 
+
+Crucially, the implementation of custom context-carrier injection solves the tracking problem inherent in decoupled database architectures, ensuring continuous request visibility from bid submission to data plane enforcement. Furthermore, data reduction strategies at the Collector ensure this visibility incurs negligible performance overhead. The next chapter evaluates this framework in action, demonstrating its capability to detect and localize a severe infrastructure fault.

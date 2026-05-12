@@ -19,7 +19,8 @@ deploy-api:
 
 deploy-atomix:
 	@echo "==> Deploying Atomix..."
-	helm upgrade --install -n kube-system atomix-runtime atomix/atomix-runtime --wait
+	helm upgrade --install -n kube-system atomix-runtime atomix/atomix-runtime\
+		--set image.pullPolicy=IfNotPresent
 	kubectl apply -f ./atomix/storage-profile.yaml
 	kubectl apply -f ./atomix/store.yaml
 
@@ -40,14 +41,19 @@ deploy-dummy:
 
 deploy-kafka:
 	@echo "==> Deploying Kafka..."
-	helm upgrade --install strimzi-cluster-operator oci://quay.io/strimzi-helm/strimzi-kafka-operator --wait
+	helm upgrade --install strimzi-cluster-operator oci://quay.io/strimzi-helm/strimzi-kafka-operator \
+		--version 1.0.0 \
+  		--set image.pullPolicy=IfNotPresent \
+  		--set kafkaOperator.image.pullPolicy=IfNotPresent
 	kubectl apply -f ./kafka/kafka.yaml
-	kubectl wait kafka/ixp-kafka --for=condition=Ready --timeout=300s
+	kubectl wait kafka/ixp-kafka --for=condition=Ready --timeout=3000s
 
 deploy-minikube:
-	@echo "==> Deploying Minikube..."
 	minikube start --cpus=4 --memory=8192
-	minikube addons enable ingress
+# 		--docker-env HTTP_PROXY=http://docker.internal \
+# 		--docker-env HTTPS_PROXY=http://docker.internal \
+# 		--docker-env NO_PROXY=localhost,127.0.0.1,10.96.0.0/12,192.168.49.0/24,host.docker.internal;
+# 	minikube addons enable ingress
 
 deploy-observability:
 	@echo "==> Deploying Unified Observability Stack..."
@@ -63,7 +69,13 @@ deploy-observability:
 	helm upgrade --install observability prometheus-community/kube-prometheus-stack \
 		--namespace observability --create-namespace \
 		-f observability/values.yaml \
-		--wait
+		--set grafana.image.pullPolicy=IfNotPresent \
+		--set prometheus.prometheusSpec.image.pullPolicy=IfNotPresent \
+		--set prometheusOperator.image.pullPolicy=IfNotPresent \
+		--timeout 5m
+	@echo "==> Waiting for Prometheus & Grafana to be ready (max 2 min)..."
+	kubectl rollout status deployment/observability-grafana -n observability --timeout=120s 2>/dev/null || true
+	kubectl rollout status deployment/observability-kube-prometheus-prometheus-operator -n observability --timeout=120s 2>/dev/null || true
 	
 	# Deploy OpenTelemetry Collector
 	@echo "==> Installing OpenTelemetry Collector..."
@@ -72,8 +84,10 @@ deploy-observability:
 	helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
 		--namespace observability \
 		-f helm/opentelemetry-collector/values.yaml \
-		--timeout 10m \
-		--wait
+		--set image.pullPolicy=IfNotPresent \
+		--timeout 5m
+	@echo "==> Waiting for OpenTelemetry Collector (max 1 min)..."
+	kubectl rollout status daemonset/otel-collector-daemonset -n observability --timeout=60s 2>/dev/null || true
 	
 	# Deploy Jaeger (all-in-one for development)
 	@echo "==> Installing Jaeger..."
@@ -82,11 +96,14 @@ deploy-observability:
 	helm upgrade --install jaeger jaegertracing/jaeger \
 		--namespace observability \
 		--set allInOne.enabled=true \
+		--set allInOne.image.pullPolicy=IfNotPresent \
 		--set storage.type=memory \
 		--set agent.enabled=false \
 		--set collector.enabled=false \
 		--set query.enabled=false \
-		--wait
+		--timeout 5m
+	@echo "==> Waiting for Jaeger (max 1 min)..."
+	kubectl rollout status deployment/jaeger -n observability --timeout=60s 2>/dev/null || true
 	
 	# Deploy Loki (log aggregation)
 	@echo "==> Installing Loki..."
@@ -95,7 +112,10 @@ deploy-observability:
 	helm upgrade --install loki grafana/loki \
 		--namespace observability \
 		-f helm/loki/values.yaml \
-		--wait
+		--set loki.image.pullPolicy=IfNotPresent \
+		--timeout 5m
+	@echo "==> Waiting for Loki (max 1 min)..."
+	kubectl rollout status deployment/loki -n observability --timeout=60s 2>/dev/null || true
 	
 	# Apply IXP Flows dashboard
 	@echo "==> Deploying IXP Flows dashboard..."
@@ -104,29 +124,13 @@ deploy-observability:
 		-n observability -o yaml --dry-run=client | kubectl apply -f -
 	kubectl label configmap ixp-flows-dashboard \
 		-n observability grafana_dashboard="1" --overwrite
-	
-	# Apply IXP Bids dashboard
-	@echo "==> Deploying IXP Bids dashboard..."
-	kubectl create configmap ixp-bids-dashboard \
-		--from-file=ixp-bids.json=./observability/ixp-bids.json \
-		-n observability -o yaml --dry-run=client | kubectl apply -f -
-	kubectl label configmap ixp-bids-dashboard \
-		-n observability grafana_dashboard="1" --overwrite
-	
-	# Apply IXP Auctions dashboard
-	@echo "==> Deploying IXP Auctions dashboard..."
-	kubectl create configmap ixp-auctions-dashboard \
-		--from-file=ixp-auction.json=./observability/ixp-auction.json \
-		-n observability -o yaml --dry-run=client | kubectl apply -f -
-	kubectl label configmap ixp-auctions-dashboard \
-		-n observability grafana_dashboard="1" --overwrite
 
-	# Apply IXP Errors dashboard
-	@echo "==> Deploying IXP Errors dashboard..."
-	kubectl create configmap ixp-errors-dashboard \
-		--from-file=ixp-errors.json=./observability/ixp-errors.json \
+	# Apply IXP Mission Control dashboard
+	@echo "==> Deploying IXP Mission Control dashboard..."
+	kubectl create configmap ixp-mission-control-dashboard \
+		--from-file=ixp-mission-control.json=./observability/ixp-mission-control.json \
 		-n observability -o yaml --dry-run=client | kubectl apply -f -
-	kubectl label configmap ixp-errors-dashboard \
+	kubectl label configmap ixp-mission-control-dashboard \
 		-n observability grafana_dashboard="1" --overwrite
 
 	# Apply custom IXP alert rules
@@ -177,12 +181,12 @@ deploy-agent:
 # ============================================================
 .PHONY: infra services all load-experiment delete-agents deploy-real
 
-infra: deploy-minikube deploy-kafka deploy-atomix deploy-config deploy-observability
+infra: deploy-minikube preload-images deploy-kafka deploy-atomix deploy-config deploy-observability
 
 services: vendor deploy-api deploy-auction deploy-telemetry deploy-dummy deploy-agent
 
-# Core services only — no dummy switch, no agents.
-services: vendor deploy-api deploy-auction deploy-telemetry
+# # Core services only — no dummy switch, no agents.
+# services: vendor deploy-api deploy-auction deploy-telemetry
 
 # Default: deploy the core control plane only (no experiment traffic, no agents).
 # To also run an experiment: make all experiment=2a
@@ -333,7 +337,7 @@ deploy-experiment-9:
 # ============================================================
 # Utilities
 # ============================================================
-.PHONY: vendor logs setup grafana-ui stop test
+.PHONY: vendor logs setup grafana-ui stop test preload-images
 
 vendor:
 	@for mod in $(VENDOR_MODULES); do \
@@ -366,7 +370,7 @@ jaegar-ui:
 	kubectl port-forward -n observability svc/jaeger 16686:16686 &
 	@echo "Jaegar UI availble at http://localhost:16686"
 prometheus-ui:
-	kubectl port-forward svc/observability-kube-prometheus-prometheus 9090:9090 -n observability &
+	kubectl port-forward svc/observability-kube-prometh-prometheus 9090:9090 -n observability &
 	@echo "Prometheus at http://localhost:9090"
 
 # Export key experiment metrics from Prometheus for the last hour.
@@ -417,6 +421,35 @@ export-metrics:
 
 stop:
 	minikube delete
+
+preload-images:
+	@echo "==> Pre-loading container images into Minikube..."
+	@echo "    Atomix images..."
+	@eval $$(minikube docker-env) && docker images atomix/consensus-controller:v0.7.1 | grep -q v0.7.1 && minikube image load atomix/consensus-controller:v0.7.1 || echo "    ⚠️  atomix/consensus-controller:v0.7.1 not found in Docker"
+	@eval $$(minikube docker-env) && docker images atomix/runtime-controller-init:v0.8.0 | grep -q v0.8.0 && minikube image load atomix/runtime-controller-init:v0.8.0 || echo "    ⚠️  atomix/runtime-controller-init:v0.8.0 not found in Docker"
+	@eval $$(minikube docker-env) && docker images atomix/runtime-controller:v0.8.0 | grep -q v0.8.0 && minikube image load atomix/runtime-controller:v0.8.0 || echo "    ⚠️  atomix/runtime-controller:v0.8.0 not found in Docker"
+	@eval $$(minikube docker-env) && docker images atomix/pod-memory-controller:v0.1.0 | grep -q v0.1.0 && minikube image load atomix/pod-memory-controller:v0.1.0 || echo "    ⚠️  atomix/pod-memory-controller:v0.1.0 not found in Docker"
+	@eval $$(minikube docker-env) && docker images atomix/shared-memory-controller:v0.1.0 | grep -q v0.1.0 && minikube image load atomix/shared-memory-controller:v0.1.0 || echo "    ⚠️  atomix/shared-memory-controller:v0.1.0 not found in Docker"
+	@echo "    Kafka/Strimzi images..."
+	@eval $$(minikube docker-env) && docker images quay.io/strimzi/operator:1.0.0 | grep -q 1.0.0 && minikube image load quay.io/strimzi/operator:1.0.0 || echo "    ⚠️  quay.io/strimzi/operator:1.0.0 not found in Docker"
+	@eval $$(minikube docker-env) && docker images quay.io/strimzi/kafka:1.0.0-kafka-4.1.1 | grep -q 1.0.0-kafka-4.1.1 && minikube image load quay.io/strimzi/kafka:1.0.0-kafka-4.1.1 || echo "    ⚠️  quay.io/strimzi/kafka:1.0.0-kafka-4.1.1 not found in Docker"
+	@echo "    Prometheus stack images..."
+	@eval $$(minikube docker-env) && docker images docker.io/grafana/grafana:13.0.1 | grep -q 13.0.1 && minikube image load docker.io/grafana/grafana:13.0.1 || echo "    ⚠️  docker.io/grafana/grafana:13.0.1 not found in Docker"
+	@eval $$(minikube docker-env) && docker images ghcr.io/jkroepke/kube-webhook-certgen:1.8.2 | grep -q 1.8.2 && minikube image load ghcr.io/jkroepke/kube-webhook-certgen:1.8.2 || echo "    ⚠️  ghcr.io/jkroepke/kube-webhook-certgen:1.8.2 not found in Docker"
+	@eval $$(minikube docker-env) && docker images quay.io/kiwigrid/k8s-sidecar:2.7.1 | grep -q 2.7.1 && minikube image load quay.io/kiwigrid/k8s-sidecar:2.7.1 || echo "    ⚠️  quay.io/kiwigrid/k8s-sidecar:2.7.1 not found in Docker"
+	@eval $$(minikube docker-env) && docker images quay.io/prometheus-operator/prometheus-operator:v0.90.1 | grep -q v0.90.1 && minikube image load quay.io/prometheus-operator/prometheus-operator:v0.90.1 || echo "    ⚠️  quay.io/prometheus-operator/prometheus-operator:v0.90.1 not found in Docker"
+	@eval $$(minikube docker-env) && docker images quay.io/prometheus/alertmanager:v0.32.1 | grep -q v0.32.1 && minikube image load quay.io/prometheus/alertmanager:v0.32.1 || echo "    ⚠️  quay.io/prometheus/alertmanager:v0.32.1 not found in Docker"
+	@eval $$(minikube docker-env) && docker images quay.io/prometheus/node-exporter:v1.11.1 | grep -q v1.11.1 && minikube image load quay.io/prometheus/node-exporter:v1.11.1 || echo "    ⚠️  quay.io/prometheus/node-exporter:v1.11.1 not found in Docker"
+	@eval $$(minikube docker-env) && docker images quay.io/prometheus/prometheus:v3.11.3 | grep -q v3.11.3 && minikube image load quay.io/prometheus/prometheus:v3.11.3 || echo "    ⚠️  quay.io/prometheus/prometheus:v3.11.3 not found in Docker"
+	@eval $$(minikube docker-env) && docker images registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.18.0 | grep -q v2.18.0 && minikube image load registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.18.0 || echo "    ⚠️  registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.18.0 not found in Docker"
+	@echo "    OpenTelemetry images..."
+	@eval $$(minikube docker-env) && docker images otel/opentelemetry-collector-contrib:0.151.0 | grep -q 0.151.0 && minikube image load otel/opentelemetry-collector-contrib:0.151.0 || echo "    ⚠️  otel/opentelemetry-collector-contrib:0.151.0 not found in Docker"
+	@echo "    Jaeger images..."
+	@eval $$(minikube docker-env) && docker images jaegertracing/jaeger:2.17.0 | grep -q 2.17.0 && minikube image load jaegertracing/jaeger:2.17.0 || echo "    ⚠️  jaegertracing/jaeger:2.17.0 not found in Docker"
+	@echo "    Loki images..."
+	@eval $$(minikube docker-env) && docker images docker.io/grafana/loki:3.6.7 | grep -q 3.6.7 && minikube image load docker.io/grafana/loki:3.6.7 || echo "    ⚠️  docker.io/grafana/loki:3.6.7 not found in Docker"
+	@eval $$(minikube docker-env) && docker images docker.io/kiwigrid/k8s-sidecar:2.5.0 | grep -q 2.5.0 && minikube image load docker.io/kiwigrid/k8s-sidecar:2.5.0 || echo "    ⚠️  docker.io/kiwigrid/k8s-sidecar:2.5.0 not found in Docker"
+	@echo "✅ Preload complete (images that don't exist locally were skipped)"
 
 proto:
 	cd shared/proto && mkdir -p pb && protoc -I . --go_out=pb --go_opt=paths=source_relative *.proto

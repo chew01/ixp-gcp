@@ -29,6 +29,10 @@ spec:
     metadata:
       labels:
         app: customer-agent-%s
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: customer-agent
@@ -40,6 +44,12 @@ spec:
             value: "http://api-gateway"
           - name: SCENARIO_PATH
             value: /etc/scenario/scenario.yaml
+          - name: OTEL_SERVICE_NAME
+            value: customer-agent-%s
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: "otel-collector-opentelemetry-collector.observability.svc.cluster.local:4317"
+          - name: TELEMETRY_MODE
+            value: "collector"
         volumeMounts:
           - name: scenario-volume
             mountPath: /etc/scenario
@@ -70,6 +80,6 @@ func main() {
 			continue
 		}
 		seen[c.ID] = true
-		fmt.Printf(deploymentTemplate, c.ID, c.ID, c.ID, c.ID)
+		fmt.Printf(deploymentTemplate, c.ID, c.ID, c.ID, c.ID, c.ID)
 	}
 }

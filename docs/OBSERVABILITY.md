@@ -78,24 +78,6 @@ make grafana-ui
 | **Prometheus** | `kubectl port-forward -n observability svc/observability-kube-prometheus-prometheus 9090:9090` | http://localhost:9090 | - |
 | **Jaeger** | `kubectl port-forward -n observability svc/jaeger 16686:16686` | http://localhost:16686 | - |
 
-### Dashboards in Grafana
-
-#### **Auction Metrics Dashboard** (`observability/ixp-auction.json`)
-- **Total Auctions** - Stat panel showing cumulative auction runs (`sum(ixp_auction_runs_total)`)
-- **Egress Port Latest Clearing Price** - Timeseries showing real-time clearing price per egress port (`max by (egress_port) (ixp_auction_clearing_price_latest_SGD)`)
-- **Ingress Demand by Port (Real-time Rate)** - Timeseries showing bandwidth demand per ingress port (`sum by (ingress_port) (increase(ixp_auction_units_requested_kbps_total[1m]))`)
-
-#### **Flow Metrics Dashboard** (`observability/ixp-flows.json`)
-- **Ingress 1-10 Throughput** - Stat panels for each ingress port's current throughput (kbps)
-- **Egress Port 0 Throughput** - Aggregated egress throughput
-- **Egress Kbps (Ingress 1)** - Egress traffic for specific ingress-egress pair
-- **Drop Kbps & Drop Rate %** - Shows packet drops and drop rate percentage for specific flows
-
-#### **Bids Dashboard** (`observability/ixp-bids.json`)
-- **Bid Submission Rate** - Timeseries showing bids per minute globally and per ingress port
-- **Total Bids Received** - Cumulative bid count stat (`sum(ixp_bid_price_SGD_count)`)
-- **Bandwidth Demand Quantiles** - Timeseries with p50, p90, p99 quantiles of bid bandwidth requests
-
 ---
 
 ## 3. Business Metrics Reference

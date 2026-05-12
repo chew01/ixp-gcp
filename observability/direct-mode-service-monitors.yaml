@@ -1,0 +1,40 @@
+# ServiceMonitor for direct Prometheus scraping (Scenario B)
+# This enables Prometheus to discover and scrape metrics from services
+# running in direct telemetry mode
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ixp-services-direct
+  namespace: observability
+  labels:
+    release: observability
+spec:
+  selector:
+    matchLabels:
+      app: api-gateway
+  namespaceSelector:
+    matchNames:
+      - default
+  endpoints:
+    - port: metrics
+      interval: 10s
+      path: /metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ixp-dummy-direct
+  namespace: observability
+  labels:
+    release: observability
+spec:
+  selector:
+    matchLabels:
+      app: dummy-producer
+  namespaceSelector:
+    matchNames:
+      - default
+  endpoints:
+    - port: metrics
+      interval: 10s
+      path: /metrics

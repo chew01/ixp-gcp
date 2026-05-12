@@ -11,7 +11,15 @@ spec:
     metadata:
       labels:
         app: dummy-producer
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
     spec:
+      initContainers:
+      - name: wait-for-kafka
+        image: busybox
+        command: ['sh', '-c', 'until nc -z ixp-kafka-kafka-bootstrap 9092; do echo waiting for kafka; sleep 2; done;']
       containers:
       - name: dummy-producer
         image: dummy-producer:local
@@ -22,6 +30,8 @@ spec:
           value: dummy-producer
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: "otel-collector-opentelemetry-collector.observability.svc.cluster.local:4317"
+        - name: TELEMETRY_MODE
+          value: "collector"
         volumeMounts:
           - name: scenario-volume
             mountPath: /etc/scenario

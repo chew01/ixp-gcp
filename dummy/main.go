@@ -26,6 +26,12 @@ func main() {
 
 	otel.InitInstruments()
 
+	// Start Prometheus metrics HTTP server if in direct mode
+	if os.Getenv("TELEMETRY_MODE") == "direct" {
+		go otel.ServePrometheusMetrics(":9090")
+		log.Println("Started Prometheus metrics server on :9090")
+	}
+
 	// Start root span for the dummy service
 	// ctx, rootSpan := otel.Tracer.Start(ctx, "dummy-service-setup")
 	// defer rootSpan.End()

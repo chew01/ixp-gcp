@@ -29,6 +29,12 @@ func main() {
 	localotel.InitAtomixMetrics("telemetry")
 	localotel.InitKafkaMetrics("telemetry")
 
+	// Start Prometheus metrics HTTP server if in direct mode
+	if os.Getenv("TELEMETRY_MODE") == "direct" {
+		go localotel.ServePrometheusMetrics(":9090")
+		slog.Info("Started Prometheus metrics server on :9090")
+	}
+
 	slog.Info("Telemetry service initializing")
 	defer func() {
 		err = errors.Join(err, otelShutdown(context.Background()))

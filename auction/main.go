@@ -35,6 +35,12 @@ func main() {
 	// Initialize OTel-integrated logger (must be after OTel SDK setup)
 	localotel.InitInstruments()
 
+	// Start Prometheus metrics HTTP server if in direct mode
+	if os.Getenv("TELEMETRY_MODE") == "direct" {
+		go localotel.ServePrometheusMetrics(":9090")
+		slog.Info("Started Prometheus metrics server on :9090")
+	}
+
 	ctx, span := localotel.Tracer.Start(ctx, "auction-runner-setup")
 	defer span.End()
 	// Handle shutdown properly so nothing leaks.

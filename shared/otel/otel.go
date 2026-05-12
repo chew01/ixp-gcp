@@ -20,7 +20,22 @@ import (
 
 // SetupOTelSDK bootstraps the OpenTelemetry pipeline.
 // If it does not return an error, make sure to call shutdown for proper cleanup.
+// Detects TELEMETRY_MODE env var to choose between OTLP collector or direct exporters.
 func SetupOTelSDK(ctx context.Context) (func(context.Context) error, error) {
+	// Check telemetry mode
+	telemetryMode := os.Getenv("TELEMETRY_MODE")
+	if telemetryMode == "" {
+		telemetryMode = "collector" // default
+	}
+
+	log.Printf("Telemetry mode: %s", telemetryMode)
+
+	// Use direct exporters if configured
+	if telemetryMode == "direct" {
+		return SetupDirectExporters(ctx)
+	}
+
+	// Otherwise, use OTLP exporters to collector
 	// Get endpoint with validation and default
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	if endpoint == "" {
@@ -114,8 +129,8 @@ func newTracerProvider(endpoint string) (*trace.TracerProvider, error) {
 
 	tracerProvider := trace.NewTracerProvider(
 		trace.WithBatcher(traceExporter,
-			// Default is 5s. Set to 1s for demonstrative purposes.
-			trace.WithBatchTimeout(time.Second)),
+			// Increased from 1s to 10s to match OTEL collector batch timeout
+			trace.WithBatchTimeout(10*time.Second)),
 	)
 	return tracerProvider, nil
 }
@@ -140,8 +155,9 @@ func newMeterProvider(endpoint string) (*metric.MeterProvider, error) {
 
 	meterProvider := metric.NewMeterProvider(
 		metric.WithReader(metric.NewPeriodicReader(metricExporter,
-			// Default is 1m. Set to 1s for fast metrics export
-			metric.WithInterval(1*time.Second))),
+			// Increased from 1s to 10s to match OTEL collector batch timeout
+			// This prevents overwhelming the collector with constant exports
+			metric.WithInterval(10*time.Second))),
 	)
 	return meterProvider, nil
 }
@@ -168,8 +184,8 @@ func newLoggerProvider(endpoint string) (*sdklog.LoggerProvider, error) {
 		sdklog.WithProcessor(sdklog.NewBatchProcessor(logExporter,
 			// Reduce batch size to prevent buffering issues during high concurrency
 			sdklog.WithMaxQueueSize(512),
-			// Export frequently to prevent log truncation under load
-			sdklog.WithExportInterval(100*time.Millisecond),
+			// Increased from 100ms to 2s to reduce export frequency
+			sdklog.WithExportInterval(2*time.Second),
 		)),
 	)
 	return loggerProvider, nil

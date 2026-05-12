@@ -41,6 +41,12 @@ func run() error {
 	}
 	localotel.InitInstruments()
 
+	// Start Prometheus metrics HTTP server if in direct mode
+	if os.Getenv("TELEMETRY_MODE") == "direct" {
+		go localotel.ServePrometheusMetrics(":9090")
+		slog.Info("Started Prometheus metrics server on :9090")
+	}
+
 	slog.Info("API Gateway starting", "version", "1.0.0")
 
 	// Defer OTel shutdown to ensure it runs at the very end

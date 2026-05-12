@@ -190,6 +190,13 @@ func (c *Consumer) handleMessage(ctx context.Context, msg kafka.Message) error {
 	}
 
 	flowKey := buildFlowKey(flow)
+	slog.DebugContext(ctx, "telemetry message received",
+		"flow_key", flowKey,
+		"ingress_port", flow.GetIngressPort(),
+		"egress_port", flow.GetEgressPort(),
+		"rx_byte_count", report.GetRxByteCount(),
+		"tx_byte_count", report.GetTxByteCount(),
+	)
 
 	prev, err := c.getFlowState(ctx, flowKey)
 	if err != nil {
@@ -280,15 +287,14 @@ func (c *Consumer) publishMetrics(ctx context.Context, m FlowMetrics) error {
 	// Record flow published to Atomix
 	if c.metrics.FlowMetricsPublished != nil {
 		c.metrics.FlowMetricsPublished.Add(ctx, 1)
+		slog.InfoContext(ctx, "flow metrics published to Atomix",
+			"flow_key", m.FlowKey,
+			"throughput_kbps", m.IngressKbps,
+			"egress_kbps", m.EgressKbps,
+			"drop_kbps", m.DropKbps,
+			"drop_rate_pct", m.DropRate,
+		)
 	}
-
-	slog.Debug("flow metrics published",
-		"flow_key", m.FlowKey,
-		"ingress_kbps", m.IngressKbps,
-		"egress_kbps", m.EgressKbps,
-		"drop_kbps", m.DropKbps,
-		"drop_rate_pct", m.DropRate,
-	)
 
 	// TODO: forward to TSDB
 	return nil

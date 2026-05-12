@@ -1,0 +1,39 @@
+%%
+% BIThesis Undergraduate Thesis Template (English) — Compile with XeLaTeX
+% Conclusions
+%%
+
+\begin{conclusion}
+
+This thesis successfully designed, implemented, and evaluated a comprehensive observability framework tailored for a distributed Software-Defined Networking (SDN) global control plane. By integrating modern distributed systems architecture with OpenTelemetry's three-pillar model, this work addresses the critical monitoring gaps inherent in decoupled, asynchronous network controllers.
+
+\section{Summary of Contributions}
+
+The key contributions of this thesis address specific engineering and operational challenges in modern SDN environments through the following advancements:
+
+\subsection{Decoupled SDN Control Plane Design}
+This work implemented a state-separated microservice architecture designed for dynamic IXP bandwidth resale. By utilizing Atomix as a strongly consistent state store and Apache Kafka as an asynchronous event bus, the system successfully decoupled the high-level economic clearing logic (the uniform-price auction) from low-level data plane enforcement. The implementation of a virtual-bid reservation pricing mechanism ensured fair market resource allocation while protecting network infrastructure from congestion.
+
+\subsection{Asynchronous Observability Framework}
+Rather than deploying generic infrastructure monitoring, this thesis designed a purpose-built observability pipeline. By strategically deploying an OpenTelemetry Collector equipped with severity-based log filtering and tail-based trace sampling, the framework achieved deep visibility into application logic with minimal resource overhead. Crucially, this work solved the context-loss problem inherent in asynchronous microservices by implementing a custom W3C TraceContext propagation strategy, utilizing the Atomix database records as trace carriers to stitch together disconnected execution spans.
+
+\subsection{System Validation and Fault Localization}
+Through rigorous experimental evaluation, the system demonstrated both functional correctness and high observability. The baseline experiments proved the efficiency of the auction algorithm under heavy traffic spikes. Furthermore, the consensus degradation scenario proved that the observability framework can instantly detect, localize, and provide root-cause log evidence for "soft failures" (such as database latency) that traditional Kubernetes orchestration checks completely fail to recognize.
+
+\section{Future Directions}
+
+While this thesis establishes a robust foundation for observable SDN control planes, the architecture opens several avenues for future academic research and industrial enhancement.
+
+\subsection{Machine Learning-Driven Anomaly Detection}
+Currently, the observability framework relies on static, threshold-based alerting (e.g., querying for latencies exceeding 50ms). Future work could integrate Artificial Intelligence for IT Operations (AIOps) \cite{gomesImpactOpenTelemetryConfiguration2024}. By exporting the unified metrics and traces to a machine learning model, the system could establish dynamic baselines and perform predictive anomaly detection, anticipating control plane failures before customer traffic is impacted.
+
+\subsection{Federated Multi-Region Control Planes}
+The current architecture is scoped to a global control plane operating within a single geographic cluster. As IXPs expand, future iterations of this system must support multi-region federation \cite{chanGoogleCloudLoadBalancing2019}. This will require extending the observability framework to support cross-cluster trace correlation and global metric aggregation, ensuring that an auction initiated in Asia and enforced in Europe maintains a single, unified distributed trace.
+
+\subsection{Dynamic Economic Pricing Mechanisms}
+The auction algorithm currently utilizes a statically configured reservation price (via the virtual bid injection) to protect network capacity. Future research could utilize the historical observability data (specifically the correlated flow metrics and clearing prices) to implement dynamic, algorithmically adjusted reservation prices \cite{paulDistributedConsensusNetworkAgreement2016}. This would allow the control plane to autonomously maximize IXP revenue during peak hours while remaining highly competitive during off-peak windows.
+
+\vspace{1em}
+In conclusion, as SDN control planes evolve toward increasingly complex, asynchronous microservice architectures \cite{otelDocumentation2024}, comprehensive observability frameworks will transition from optional operational tools to essential system infrastructure. This thesis provides the technical foundation, design patterns, and empirical evidence to guide the next generation of reliable network deployments \cite{majorsObservabilityEngineering2022, thompsonDesigningObservableDistributedSystems2022}.
+
+\end{conclusion}

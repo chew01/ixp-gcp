@@ -38,7 +38,7 @@ spec:
 
         - alert: IXPAtomixOperationFailuresCritical
           expr: sum(rate(ixp_api_atomix_operation_errors_total{operation!="bootstrap"}[1m])) > 0
-          for: 5s
+          for: 30s
           labels:
             severity: critical
             component: api-gateway
@@ -58,7 +58,7 @@ spec:
 
         - alert: IXPAtomixNearTotalFailure
           expr: rate(ixp_api_atomix_operation_errors_total{operation!="bootstrap"}[1m]) > 0.5
-          for: 5s
+          for: 30s
           labels:
             severity: critical
             component: api-gateway

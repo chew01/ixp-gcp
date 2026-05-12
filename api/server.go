@@ -49,13 +49,17 @@ func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
 	defer span.End()
 	if r.Method != http.MethodGet {
 		slog.ErrorContext(ctx, "method not allowed")
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		span.SetStatus(codes.Error, "method-not-allowed")
+		span.RecordError(fmt.Errorf("method not allowed"))
+		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
 	customerID := customerIDFromRequest(r)
 	if customerID == "" {
-		http.Error(w, "missing customer identity: set X-Customer-ID or Authorization: Bearer <customer_id>", http.StatusUnauthorized)
+		span.SetStatus(codes.Error, "missing-customer-identity")
+		span.RecordError(fmt.Errorf("missing customer identity: set X-Customer-ID or Authorization: Bearer <customer_id>"))
+		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 
@@ -66,7 +70,9 @@ func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
 		attribute.Int("egress", egress),
 	)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		span.SetStatus(codes.Error, "invalid-flow-params")
+		span.RecordError(err)
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
@@ -81,7 +87,9 @@ func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
 				"customer_id", customerID,
 			)
 			span.SetAttributes(attribute.String("result", "forbidden"))
-			http.Error(w, "flow not owned by this customer", http.StatusForbidden)
+			span.SetStatus(codes.Error, "forbidden")
+			span.RecordError(fmt.Errorf("flow not owned by this customer"))
+			w.WriteHeader(http.StatusForbidden)
 			return
 		}
 	}
@@ -94,7 +102,7 @@ func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
 		slog.ErrorContext(ctx, "flow store read failed", "operation", "read_flows", "flow_key", flowKey, "error", err)
 		span.SetStatus(codes.Error, "error-fetching-flow")
 		span.RecordError(err)
-		http.Error(w, fmt.Sprintf("error fetching flow: %v", err), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	if value == "" {
@@ -105,13 +113,17 @@ func (s *Server) getFlows(w http.ResponseWriter, r *http.Request) {
 			"egress_port", egress,
 		)
 		span.SetAttributes(attribute.String("result", "not_found"))
-		http.Error(w, "flow not found", http.StatusNotFound)
+		span.SetStatus(codes.Error, "not-found")
+		span.RecordError(fmt.Errorf("flow not found"))
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
 	metrics, err := parseFlowMetricsValue(value)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("error parsing flow metrics: %v", err), http.StatusInternalServerError)
+		span.SetStatus(codes.Error, "error-parsing-flow-metrics")
+		span.RecordError(err)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
@@ -136,13 +148,15 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 	ctx, span := localotel.Tracer.Start(r.Context(), "place-bid")
 	defer span.End()
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		span.SetStatus(codes.Error, "method-not-allowed")
+		span.RecordError(fmt.Errorf("method not allowed"))
 		return
 	}
 
 	customerID := customerIDFromRequest(r)
 	if customerID == "" {
-		http.Error(w, "missing customer identity: set X-Customer-ID or Authorization: Bearer <customer_id>", http.StatusUnauthorized)
+		span.SetStatus(codes.Error, "missing-customer-identity")
+		span.RecordError(fmt.Errorf("missing customer identity: set X-Customer-ID or Authorization: Bearer <customer_id>"))
 		return
 	}
 
@@ -153,7 +167,6 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 		span.SetStatus(codes.Error, "invalid-JSON")
 		span.RecordError(err)
 		slog.ErrorContext(ctx, "invalid JSON", "error", err)
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
@@ -169,7 +182,6 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 		span.SetStatus(codes.Error, "bid-validation-failed")
 		span.RecordError(err)
 		slog.ErrorContext(ctx, "bid validation failed", "error", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -182,7 +194,8 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 			owner, ok := scenario.CustomerForIngressPort(s.scenario, switchID, uint32(*bid.IngressPort))
 			if !ok || owner != customerID {
 				recordAPIPolicyViolation(ctx, "customer_authorization_failed")
-				http.Error(w, "ingress port not owned by this customer", http.StatusForbidden)
+				span.SetStatus(codes.Error, "forbidden")
+				span.RecordError(fmt.Errorf("ingress port not owned by this customer"))
 				return
 			}
 		}
@@ -192,7 +205,7 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 	if s.bs == nil {
 		slog.ErrorContext(ctx, "Atomix store unavailable", "operation", "write_bid")
 		span.SetStatus(codes.Error, "atomix-unavailable")
-		http.Error(w, "bid store unavailable", http.StatusServiceUnavailable)
+		span.RecordError(fmt.Errorf("bid store unavailable"))
 		return
 	}
 
@@ -210,7 +223,6 @@ func (s *Server) postBid(w http.ResponseWriter, r *http.Request) {
 		span.RecordError(err)
 		msg := fmt.Sprintf("failed to store bid: %v", err)
 		slog.ErrorContext(ctx, msg, "error", err)
-		http.Error(w, "failed to store bid", http.StatusInternalServerError)
 		return
 	}
 

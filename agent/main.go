@@ -98,6 +98,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to setup otel: %v", err)
 	}
+
+	// Start Prometheus metrics HTTP server if in direct mode
+	if os.Getenv("TELEMETRY_MODE") == "direct" {
+		go localotel.ServePrometheusMetrics(":9090")
+		log.Println("Started Prometheus metrics server on :9090")
+	}
 	defer func() {
 		if shutdownErr := otelShutdown(ctx); shutdownErr != nil {
 			log.Printf("otel shutdown error: %v", shutdownErr)

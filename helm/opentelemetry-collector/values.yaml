@@ -45,9 +45,43 @@ config:
           endpoint: 0.0.0.0:4318
 
   processors:
+    # Memory limiter prevents unbounded queue growth and OOM
+    memory_limiter:
+      check_interval: 1s
+      limit_mib: 1024
+      spike_limit_mib: 256
+
     batch:
-      timeout: 1s
-      send_batch_size: 512
+      timeout: 10s                    # Increased from 1s to allow more time for processing
+      send_batch_size: 256            # Reduced from 512 to send smaller batches faster
+      send_batch_max_size: 512        # Max batch size to prevent unlimited growth
+
+    # Tail sampling for traces: keep 100% errors, 5% of successful traces
+    # This reduces storage costs while retaining all error telemetry
+    tail_sampling:
+      decision_wait: 10s
+      num_traces: 100
+      expected_new_traces_per_sec: 10
+      policies:
+        # Policy 1: Always sample ERROR status traces
+        - name: error-traces
+          type: status_code
+          status_code:
+            status_codes:
+              - ERROR
+        # Policy 2: Sample 5% of everything else (healthy traces)
+        - name: probabilistic-healthy
+          type: probabilistic
+          probabilistic:
+            sampling_percentage: 5
+    
+    # NEW: Filter processor for logs
+    filter/logs:
+      error_mode: ignore
+      logs:
+        log_record:
+          # This statement drops any log where the severity is INFO or DEBUG
+          - 'severity_number <= 9'
 
   exporters:
     # Export traces to Jaeger (all-in-one deployment)
@@ -81,15 +115,15 @@ config:
     pipelines:
       traces:
         receivers: [otlp]
-        processors: [batch]
+        processors: [memory_limiter, batch]
         exporters: [otlp/jaeger, debug]
       logs:
         receivers: [otlp]
-        processors: [batch]
+        processors: [memory_limiter, batch]
         exporters: [otlphttp/loki, debug]
       metrics:
         receivers: [otlp]
-        processors: [batch]
+        processors: [memory_limiter, batch]
         exporters: [prometheus, debug]
 
 # ServiceMonitor to register OTEL collector metrics with Prometheus operator

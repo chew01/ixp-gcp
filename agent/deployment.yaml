@@ -11,6 +11,10 @@ spec:
     metadata:
       labels:
         app: customer-agent-as12345
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: customer-agent
@@ -27,6 +31,8 @@ spec:
             value: customer-agent
           - name: OTEL_EXPORTER_OTLP_ENDPOINT
             value: "otel-collector-opentelemetry-collector.observability.svc.cluster.local:4317"
+          - name: TELEMETRY_MODE
+            value: "collector"
         volumeMounts:
           - name: scenario-volume
             mountPath: /etc/scenario
@@ -51,6 +57,10 @@ spec:
     metadata:
       labels:
         app: customer-agent-as67890
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: customer-agent
@@ -67,6 +77,8 @@ spec:
             value: customer-agent
           - name: OTEL_EXPORTER_OTLP_ENDPOINT
             value: "otel-collector-opentelemetry-collector.observability.svc.cluster.local:4317"
+          - name: TELEMETRY_MODE
+            value: "collector"
         volumeMounts:
           - name: scenario-volume
             mountPath: /etc/scenario

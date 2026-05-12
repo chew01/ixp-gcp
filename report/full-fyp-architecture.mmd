@@ -7,7 +7,7 @@ flowchart TB
   classDef bus fill:#fff5f5,stroke:#c53030,stroke-width:2px,color:#1f2937;
 
   %% ===== Actors =====
-  AG[Customer Agent\n(Strategy Variants)]
+  AG["Dummy Agent <br> (Bid Simulator)"]
 
   %% ===== Global Control Plane (In Scope) =====
   subgraph "Global Control Plane (In Scope)"
@@ -27,11 +27,10 @@ flowchart TB
     TEL -->|Write Flow Metrics| ATX
   end
 
-  %% ===== Downstream Side (Out of Scope) =====
-  subgraph "Local + Data Plane (External Boundary)"
+  %% ===== Downstream Side (Test Boundary) =====
+  subgraph "Simulated Environment (Test Boundary)"
     direction TB
-    DSP[Downstream Config Application]
-    SW[Switch / Metering Plane]
+    SW["Dummy Switch <br> (Telemetry Simulator)"]
   end
 
   %% ===== Interactions =====
@@ -39,13 +38,12 @@ flowchart TB
   API -->|200/202 + Policy Result| AG
   AG -->|GET /flows, /credits, /auctions| API
 
-  KAFKA -->|Clearing Result Events| DSP
-  DSP -->|Apply Config / Allocation| SW
-  SW -. Flow Counters / Telemetry .-> KAFKA
+  KAFKA -->|Consume Allocation Events| SW
+  SW -. Simulated Flow Counters .-> KAFKA
 
   %% ===== Scope classes =====
   class API,AUC,TEL inScope;
   class ATX infra;
   class KAFKA bus;
-  class DSP,SW boundary;
+  class SW boundary;
   class AG actor;
